@@ -56,7 +56,7 @@ docker compose up -d
 docker compose logs api | grep 'setup code'
 ```
 
-Open http://localhost:8080 and enter the setup code, then choose your admin username and password. On first start Lev generates its internal secrets (database password, ingest password, agent token) into a Docker volume. Every data volume starts empty.
+Open http://<server>:8080 (http://localhost:8080 on the same machine) and enter the setup code, then choose your admin username and password. On first start Lev generates its internal secrets (database password, ingest password, agent token) into a Docker volume. Every data volume starts empty.
 
 To turn on triage, create a `.env` next to `compose.yaml` with `TYPESAFE_API_KEY=...` and run `docker compose up -d` again. [`.env.example`](.env.example) lists every optional setting.
 
@@ -226,11 +226,12 @@ Return a result for **every** approved check. Failed checks return the issue to 
 
 ## HTTPS and access
 
-Local defaults bind only loopback and use HTTP. For a public server, point DNS to it and set:
+Lev listens on all interfaces, over HTTP on port 8080, by default; set `BIND_ADDRESS=127.0.0.1` to keep it reachable from the server only. Docker-published ports bypass host firewalls such as UFW, so on an internet-facing host restrict access at the network edge or with `BIND_ADDRESS`.
+
+For a public server with HTTPS, point DNS to it and set:
 
 ```dotenv
 SITE_ADDRESS=logs.example.com
-BIND_ADDRESS=0.0.0.0
 HTTP_PORT=80
 HTTPS_PORT=443
 ```

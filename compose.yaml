@@ -1,4 +1,4 @@
-# Lev: docker compose up -d, then open http://localhost:8080 and enter the setup code from
+# Lev: docker compose up -d, then open http://<server>:8080 and enter the setup code from
 # `docker compose logs api`. Everything below is optional to change; put overrides in .env.
 name: lev
 x-backend-env: &backend-env
@@ -30,8 +30,8 @@ services:
     image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
     restart: unless-stopped
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-8080}:80"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-8443}:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     volumes:
