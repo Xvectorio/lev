@@ -236,7 +236,7 @@ HTTP_PORT=80
 HTTPS_PORT=443
 ```
 
-Then `docker compose up -d`. Caddy obtains/renews HTTPS certificates when DNS and ports 80/443 are reachable. PostgreSQL, Loki and FastAPI publish no host ports. Operator accounts are managed with `reset_admin.py` (see above); there is no self-service signup. Session cookies are marked Secure when served over HTTPS. Failed logins are delayed by one second, but there is no lockout, so use a long password on an internet-facing server.
+Then `docker compose up -d`. Caddy obtains/renews HTTPS certificates when DNS and ports 80/443 are reachable. If the name isn't reachable from the internet (e.g. it resolves to a LAN address) and its DNS is on Cloudflare, also set `CLOUDFLARE_API_TOKEN` (a token with Zone.DNS:Edit on that zone only); Caddy then uses the DNS-01 challenge and needs no open ports. Without the token nothing changes. PostgreSQL, Loki and FastAPI publish no host ports. Operator accounts are managed with `reset_admin.py` (see above); there is no self-service signup. Session cookies are marked Secure when served over HTTPS. Failed logins are delayed by one second, but there is no lockout, so use a long password on an internet-facing server.
 
 ## Backups and restore
 

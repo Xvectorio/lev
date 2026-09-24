@@ -1,4 +1,5 @@
-{$SITE_ADDRESS} {
+# http://edge: the bundled vector pushes to http://edge:80 whatever SITE_ADDRESS is.
+{$SITE_ADDRESS}, http://edge {
     encode zstd gzip
     header {
         X-Content-Type-Options nosniff
