@@ -1,12 +1,14 @@
-FROM node:22-alpine AS ui
+# Build stages run natively and cross-compile; only the final stage is per-platform (no QEMU emulation).
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
 WORKDIR /app
 COPY ui/package*.json ./
 RUN npm ci
 COPY ui/ ./
 RUN npm run check && npm run build
-FROM caddy:2.10-builder-alpine AS caddy
+FROM --platform=$BUILDPLATFORM caddy:2.10-builder-alpine AS caddy
+ARG TARGETOS TARGETARCH
 # Cloudflare DNS-01 module; used only when CLOUDFLARE_API_TOKEN is set (ops/edge.sh).
-RUN xcaddy build --with github.com/caddy-dns/cloudflare
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH xcaddy build --with github.com/caddy-dns/cloudflare
 FROM caddy:2.10-alpine
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 COPY ops/Caddyfile /etc/caddy/Caddyfile
