@@ -13,8 +13,8 @@
 /* Theme surfaces retain the existing operational hierarchy and severity cues. */
 :root{color-scheme:light}
 .page-controls{display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end}
-.theme-picker{flex-direction:row;align-items:center;color:var(--muted);font-weight:400}
-.theme-picker select{width:auto;padding:6px 9px}
+
+
 :root[data-theme="dark"]{color-scheme:dark;background:#111c22;color:#dce7ec;--navy:#dce7ec;--blue:#79c9bc;--muted:#a0b4bf;--line:#354750;--red:#ff9cac}
 [data-theme="dark"] :is(button,input,select,.filters,.log-panel,.detail,.workflow,.timeline){background:#1b2a32;border-color:var(--line)}
 [data-theme="dark"] :is(.search-field input,.log-expanded,.handoff,.fields,.stage-label,.log-columns){background:#22343e;color:#c2d3dd}
@@ -37,7 +37,7 @@
 [data-theme="dark"] :is(.fields button,.histogram button){background:transparent}
 [data-theme="dark"] .histogram svg{fill:#79c9bc}
 [data-theme="dark"] .histogram button:hover svg{fill:#b5eadb}
-@media(max-width:720px){.page-controls{gap:10px;align-items:flex-end;flex-direction:column}.theme-picker{font-size:11px}}
+@media(max-width:720px){.page-controls{gap:10px;align-items:flex-end;flex-direction:column}}
 
 /* Sources admin page. */
 .admin-panel{margin-bottom:18px}

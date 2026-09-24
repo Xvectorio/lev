@@ -22,6 +22,18 @@ def secret(name):
         return ''
 
 
+# Runtime settings editable on the Settings page; a saved value overrides the .env one.
+SETTINGS = {'TYPESAFE_API_KEY': True, 'TYPESAFE_BASE_URL': False, 'AI_BASE_URL': False, 'AI_API_KEY': True, 'AI_MODEL': False}  # name: secret
+
+
+def setting(name, conn=None):
+    if conn is None:
+        with db() as conn:
+            return setting(name, conn)
+    row = conn.execute("SELECT value->>%s AS v FROM settings WHERE name='config'", (name,)).fetchone()
+    return (row and row['v']) or os.getenv(name, '')
+
+
 os.environ['PGPASSWORD'] = os.getenv('PGPASSWORD') or secret('postgres_password')
 # Internal SQL fragment, never constructed from user input; queries use alias i.
 SAMPLE_SQL = "(coalesce(i.labels->>'environment','')='demo' OR coalesce(i.labels->>'project_id','')='lev-test' OR coalesce(i.labels->>'host','') ~ '^check_[0-9a-f]{32}$')"

@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 from starlette.concurrency import run_in_threadpool
 
 import worker
-from core import LOKI, NS, SAMPLE_SQL, db, digest, evidence, initialize, logs, secret, selector
+from core import LOKI, NS, SAMPLE_SQL, SETTINGS, db, digest, evidence, initialize, logs, secret, selector, setting
 
 
 COOKIE = 'lev_session'
@@ -239,7 +239,7 @@ def status(samples: bool = False):
                 'jobs': conn.execute(f'SELECT j.status,count(*) FROM jobs j JOIN incidents i ON i.id=j.incident_id WHERE {visible} GROUP BY j.status', (samples,)).fetchall(),
                 'incidents': conn.execute(f'SELECT count(*) AS count FROM incidents i WHERE {visible}', (samples,)).fetchone()['count'],
                 'problems': conn.execute(f'SELECT i.status,count(*) FROM incidents i WHERE {visible} GROUP BY i.status', (samples,)).fetchall(),
-                'jev_configured': bool(os.getenv('TYPESAFE_API_KEY')), 'explanations_configured': bool(os.getenv('AI_MODEL'))}
+                'jev_configured': bool(setting('TYPESAFE_API_KEY', conn)), 'explanations_configured': bool(setting('AI_MODEL', conn))}
 
 
 JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at,j.completed_at,j.next_attempt,
@@ -251,7 +251,7 @@ JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at
 def jev():
     with db() as conn:
         paused = conn.execute("SELECT value FROM settings WHERE name='jev_paused'").fetchone()
-        return {'paused': bool(paused and paused['value']), 'configured': bool(os.getenv('TYPESAFE_API_KEY')),
+        return {'paused': bool(paused and paused['value']), 'configured': bool(setting('TYPESAFE_API_KEY', conn)),
                 'settings': {'model': os.getenv('TYPESAFE_MODEL', 'jev-latest'), 'policy_version': worker.POLICY_VERSION,
                              'triage_confidence': worker.CONFIDENCE, 'observe_confidence': worker.OBSERVE_CONFIDENCE},
                 'last_24h': conn.execute("""SELECT status,count(*) FROM jobs
@@ -261,6 +261,27 @@ def jev():
                     FROM jobs WHERE status='done' AND completed_at>now()-interval '24 hours' GROUP BY 1""").fetchall(),
                 'queue': conn.execute(JEV_JOBS + "WHERE j.status IN ('pending','running') ORDER BY j.next_attempt,j.created_at LIMIT 500").fetchall(),
                 'jobs': conn.execute(JEV_JOBS + "WHERE j.status NOT IN ('pending','running') ORDER BY coalesce(j.completed_at,j.created_at) DESC LIMIT 100").fetchall()}
+
+
+@app.get('/api/settings')
+def get_settings():
+    # Secrets are never sent back; the page only learns whether one is set.
+    with db() as conn:
+        return {name: {'secret': True, 'set': bool(setting(name, conn))} if hidden else {'value': setting(name, conn)}
+                for name, hidden in SETTINGS.items()}
+
+
+@app.post('/api/settings')
+def save_settings(body: dict[str, str], request: Request):
+    # Only keys sent are changed; an empty string drops the override so the .env value applies again.
+    if not body or set(body) - set(SETTINGS) or any(len(v) > 2000 for v in body.values()):
+        raise HTTPException(422, 'Unknown or oversized setting')
+    with db() as conn:
+        conn.execute("""INSERT INTO settings(name,value) VALUES ('config','{}') ON CONFLICT DO NOTHING""")
+        conn.execute("""UPDATE settings SET value=(value || %s) - %s::text[] WHERE name='config'""",
+                     (Jsonb({k: v.strip() for k, v in body.items() if v.strip()}), [k for k, v in body.items() if not v.strip()]))
+    print(f'Settings changed by {request.state.user}: {", ".join(sorted(body))}', flush=True)
+    return get_settings()
 
 
 class JevControl(BaseModel):

@@ -59,7 +59,7 @@ docker compose logs api | grep 'setup code'
 
 Open http://<server>:8080 (http://localhost:8080 on the same machine) and enter the setup code, then choose your admin username and password. On first start Lev generates its internal secrets (database password, ingest password, agent token) into a Docker volume. Every data volume starts empty.
 
-`.env` holds every optional setting, commented out with its default; empty values also mean the default. To turn on triage, set `TYPESAFE_API_KEY=...` in it and run `docker compose up -d` again.
+`.env` holds every optional setting, commented out with its default; empty values also mean the default. To turn on triage, enter the TypeSafe API key under **Settings** in the UI (takes effect immediately), or set `TYPESAFE_API_KEY=...` in `.env` and run `docker compose up -d` again. Values saved in Settings override `.env`.
 
 ---
 

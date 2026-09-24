@@ -137,6 +137,13 @@ def run():
             client.cookies.clear()
             admin = {'Cookie': lev.COOKIE + '=' + token, 'X-Lev-Request': '1'}
             assert client.get('/api/connect', headers=admin).json()['agent_token'] == core.secret('agent_token')
+            assert client.get('/api/settings').status_code == 401
+            saved = client.post('/api/settings', headers=admin, json={'AI_API_KEY': 'sk-ui', 'AI_MODEL': 'm1'}).json()
+            assert saved['AI_API_KEY'] == {'secret': True, 'set': True} and 'sk-ui' not in json.dumps(saved), 'Secret leaked'
+            assert core.setting('AI_API_KEY') == 'sk-ui' and core.setting('AI_MODEL') == 'm1'
+            assert client.post('/api/settings', headers=admin, json={'AI_MODEL': ''}).json()['AI_MODEL'] == {'value': ''}, 'Clearing falls back to env'
+            assert client.post('/api/settings', headers=admin, json={'BIND_ADDRESS': 'x'}).status_code == 422
+            client.post('/api/settings', headers=admin, json={'AI_API_KEY': ''})
             assert client.get('/api/status').status_code == 401
             assert client.get('/api/status', headers={'X-Authenticated-User': 'forged'}).status_code == 401
             assert client.get('/api/agent/tasks', headers=admin).status_code == 401

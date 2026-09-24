@@ -18,7 +18,21 @@
     applyTheme();
     try { localStorage.setItem('lev-theme', theme); } catch {}
   });
-  let view = $state<'logs' | 'incidents' | 'sources' | 'jev'>('incidents');
+  let view = $state<'logs' | 'incidents' | 'sources' | 'jev' | 'settings'>('incidents');
+  // Runtime settings: secrets come back only as {set}; a blank secret field keeps the stored key.
+  const SETTING_LABELS: Record<string, string> = {TYPESAFE_API_KEY: 'TypeSafe API key (Jev triage)', TYPESAFE_BASE_URL: 'TypeSafe base URL', AI_BASE_URL: 'Explanations base URL (OpenAI-compatible)', AI_API_KEY: 'Explanations API key', AI_MODEL: 'Explanations model (empty = off)'};
+  let appSettings = $state<Record<string, {secret?: boolean; set?: boolean; value?: string}>>({});
+  let settingsForm = $state<Record<string, string>>({});
+  async function loadSettings() {
+    appSettings = await api('/settings');
+    settingsForm = Object.fromEntries(Object.entries(appSettings).map(([k, v]) => [k, v.secret ? '' : v.value ?? '']));
+  }
+  async function saveSettings(clear?: string) {
+    error = '';
+    const body = clear ? {[clear]: ''} : Object.fromEntries(Object.entries(settingsForm).filter(([k, v]) => !appSettings[k]?.secret || v));
+    try { await api('/settings', {method: 'POST', headers: POST, body: JSON.stringify(body)}); await loadSettings(); await refreshStatus(); notice = clear ? `${SETTING_LABELS[clear]} override removed.` : 'Settings saved.'; }
+    catch (e) { error = (e as Error).message; }
+  }
   let jevData = $state<Jev | null>(null);
   let sources = $state<Sources | null>(null);
   let text = $state(''), service = $state(''), severity = $state('');
@@ -279,7 +293,7 @@
     } catch (e) { error = (e as Error).message; }
   }
   const pct = (n: number | null | undefined) => n == null ? '—' : Math.round(n * 100) + '%';
-  const reload = () => view === 'logs' ? search() : view === 'sources' ? loadSources() : view === 'jev' ? loadJev() : loadIncidents();
+  const reload = () => view === 'logs' ? search() : view === 'sources' ? loadSources() : view === 'jev' ? loadJev() : view === 'settings' ? loadSettings().catch(e => error = (e as Error).message) : loadIncidents();
 
   async function switchView(next: typeof view) {
     view = next; selected = null; notice = '';
@@ -311,7 +325,7 @@
   });
 </script>
 
-<svelte:head><title>{view === 'logs' ? 'Logs' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev' : 'Incidents'} · Lev</title></svelte:head>
+<svelte:head><title>{view === 'logs' ? 'Logs' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev' : view === 'settings' ? 'Settings' : 'Incidents'} · Lev</title></svelte:head>
 
 {#if !auth?.user}
 <main class="auth-page">
@@ -342,6 +356,7 @@
       <button class:active={view === 'incidents'} onclick={() => switchView('incidents')}><span aria-hidden="true">▤</span> Incidents <span class="count">{status?.incidents ?? '—'}</span></button>
       <button class:active={view === 'sources'} onclick={() => switchView('sources')}><span aria-hidden="true">⇄</span> Sources</button>
       <button class:active={view === 'jev'} onclick={() => switchView('jev')}><span aria-hidden="true">◈</span> Jev triage</button>
+      <button class:active={view === 'settings'} onclick={() => switchView('settings')}><span aria-hidden="true">⚙</span> Settings</button>
     </nav>
     <div class="pipeline">
       <h2>Pipeline</h2>
@@ -357,8 +372,8 @@
 
   <main>
     <header class="page-header">
-      <div><p class="breadcrumb">Infrastructure / {view === 'logs' ? 'Explore' : view === 'sources' || view === 'jev' ? 'Administer' : 'Investigate'}</p><h1>{view === 'logs' ? 'Log explorer' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev triage' : 'Incidents'}</h1></div>
-      <div class="page-controls"><label class="theme-picker">Theme<select aria-label="Theme" bind:value={theme}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label class="refresh"><input type="checkbox" bind:checked={autoRefresh}> Refresh every 15s</label><button onclick={logout} title="Log out {auth.user}">Log out</button></div>
+      <div><p class="breadcrumb">Infrastructure / {view === 'logs' ? 'Explore' : view === 'sources' || view === 'jev' || view === 'settings' ? 'Administer' : 'Investigate'}</p><h1>{view === 'logs' ? 'Log explorer' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev triage' : view === 'settings' ? 'Settings' : 'Incidents'}</h1></div>
+      <div class="page-controls"><label class="refresh"><input type="checkbox" bind:checked={autoRefresh}> Refresh every 15s</label><button onclick={logout} title="Log out {auth.user}">Log out</button></div>
     </header>
     {#if error}<div class="alert" role="alert">{error} <button onclick={reload}>Retry</button></div>{/if}
     {#if notice}<p class="notice" role="status">{notice}</p>{/if}
@@ -443,6 +458,23 @@
           <div class="task-actions connect"><button onclick={() => copySecret('vector_password', 'Ingest password')}>Copy ingest password</button><button onclick={() => copySecret('agent_token', 'Agent token')}>Copy agent token</button></div>
         </section>
       {/if}
+    {:else if view === 'settings'}
+      <section class="log-panel admin-panel"><div class="panel-heading"><h2>Appearance</h2><span>this browser only</span></div>
+        <div class="policy-form"><label>Theme<select bind:value={theme}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+      </section>
+      <section class="log-panel admin-panel"><div class="panel-heading"><h2>AI providers</h2><span>saved values override .env; clear one to fall back to it</span></div>
+        <form class="policy-form" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
+          {#each Object.entries(appSettings) as [name, s] (name)}
+            <label>{SETTING_LABELS[name] ?? name}
+              {#if s.secret}<input type="password" autocomplete="off" bind:value={settingsForm[name]} maxlength="2000" placeholder={s.set ? '•••••••• set, type to replace' : 'not set'}>
+              {:else}<input autocomplete="off" spellcheck="false" bind:value={settingsForm[name]} maxlength="2000">{/if}
+              <button type="button" onclick={() => saveSettings(name)}>Clear {s.secret ? 'saved key' : 'override'}</button>
+            </label>
+          {/each}
+          <div class="wide"><button class="primary" type="submit">Save</button></div>
+        </form>
+        <p class="connect muted">Network, domain and HTTPS settings (<code>SITE_ADDRESS</code>, ports, <code>CLOUDFLARE_API_TOKEN</code>) configure the containers themselves: change them in <code>.env</code> and run <code>docker compose up -d</code>.</p>
+      </section>
     {:else if view === 'jev'}
       <div class="incident-toolbar"><p>Jev classifies each incident episode. Pausing stops provider calls only; collection continues and jobs wait.</p><button onclick={loadJev} disabled={loading}>Refresh</button></div>
       {#if jevData}
