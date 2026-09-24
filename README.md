@@ -52,13 +52,14 @@ The host needs Docker Engine with Compose v2.23 or newer. No git checkout is req
 ```sh
 mkdir lev && cd lev
 curl -fsSLO https://github.com/jelcke/lev/releases/latest/download/compose.yaml
+curl -fsSL -o .env https://github.com/jelcke/lev/releases/latest/download/env.example && chmod 600 .env
 docker compose up -d
 docker compose logs api | grep 'setup code'
 ```
 
 Open http://<server>:8080 (http://localhost:8080 on the same machine) and enter the setup code, then choose your admin username and password. On first start Lev generates its internal secrets (database password, ingest password, agent token) into a Docker volume. Every data volume starts empty.
 
-To turn on triage, create a `.env` next to `compose.yaml` with `TYPESAFE_API_KEY=...` and run `docker compose up -d` again. [`.env.example`](.env.example) lists every optional setting.
+`.env` holds every optional setting, commented out with its default; empty values also mean the default. To turn on triage, set `TYPESAFE_API_KEY=...` in it and run `docker compose up -d` again.
 
 ---
 
