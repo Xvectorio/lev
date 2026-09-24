@@ -85,3 +85,10 @@
 .auth-card h1{font-size:24px}.auth-card .brand{color:var(--navy);margin:0}.auth-card .alert{margin:0}
 [data-theme="dark"] .auth-card{background:#1b2a32}
 .connect{padding:12px 20px;margin:0}
+.command{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:6px 6px 6px 12px;background:#f6f9fc;margin-top:-6px}
+.command code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px}
+.command code::before,.command code::after{content:'"';color:var(--muted)}
+.icon-button{flex-shrink:0;display:grid;place-items:center;padding:7px}
+.icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+[data-theme="dark"] .command{background:#22343e}
+.offscreen{position:fixed;left:-9999px;top:0}

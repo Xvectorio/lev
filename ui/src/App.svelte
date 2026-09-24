@@ -129,8 +129,23 @@
     try { await api('/auth/logout', {method: 'POST', headers: POST}); } catch {}
     auth = {setup_required: false, user: null}; stop();
   }
+  async function copyText(text: string) {
+    if (window.isSecureContext && navigator.clipboard) return navigator.clipboard.writeText(text);
+    // Plain-HTTP installs (e.g. on a LAN) have no Clipboard API; fall back to a selected textarea.
+    const area = document.createElement('textarea');
+    area.value = text; area.readOnly = true; area.className = 'offscreen';
+    document.body.append(area); area.select();
+    const copied = document.execCommand('copy'); area.remove();
+    if (!copied) throw new Error('Clipboard unavailable');
+  }
+  const SETUP_COMMAND = "docker compose logs api | grep 'setup code'";
+  let setupCopied = $state(false);
+  async function copySetupCommand() {
+    try { await copyText(SETUP_COMMAND); setupCopied = true; setTimeout(() => setupCopied = false, 2000); }
+    catch (e) { authError = (e as Error).message + '. Select the command and copy it by hand.'; }
+  }
   async function copySecret(name: 'vector_password' | 'agent_token', label: string) {
-    try { await navigator.clipboard.writeText((await api('/connect'))[name]); notice = label + ' copied to the clipboard.'; }
+    try { await copyText((await api('/connect'))[name]); notice = label + ' copied to the clipboard.'; }
     catch (e) { error = 'Could not copy: ' + (e as Error).message; }
   }
 
@@ -187,7 +202,7 @@
   // Browsers can't start a local CLI; copy a command to paste into a terminal in the Lev repo.
   async function copyAgentCommand(prompt: string) {
     const command = `claude '${prompt.replaceAll("'", `'\\''`)}'`;
-    try { await navigator.clipboard.writeText(command); notice = 'Claude Code command copied. Paste it in a terminal at the Lev repo root.'; }
+    try { await copyText(command); notice = 'Claude Code command copied. Paste it in a terminal at the Lev repo root.'; }
     catch { error = 'Clipboard unavailable. Run: ' + command; }
   }
 
@@ -195,7 +210,7 @@
     try {
       const response = await fetch(`/api/incidents/${id}/task`);
       if (!response.ok) throw new Error(`Request failed (${response.status})`);
-      await navigator.clipboard.writeText(await response.text());
+      await copyText(await response.text());
       notice = 'Agent task copied to the clipboard.';
     } catch (e) { error = 'Could not copy agent task: ' + (e as Error).message; }
   }
@@ -305,7 +320,8 @@
     {#if !auth}<p class="muted">Loading…</p>{:else}
     <h1>{auth.setup_required ? 'Create admin account' : 'Log in'}</h1>
     {#if auth.setup_required}
-      <p class="muted">Get the setup code with <code>docker compose logs api</code> on the Lev server.</p>
+      <p class="muted">To get the setup code, run this on the Lev server, in the directory with <code>compose.yaml</code>:</p>
+      <div class="command"><code>{SETUP_COMMAND}</code><button type="button" class="icon-button" onclick={copySetupCommand} aria-label={setupCopied ? 'Command copied' : 'Copy command'} title={setupCopied ? 'Copied' : 'Copy command'}>{#if setupCopied}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{:else}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>{/if}</button></div>
       <label>Setup code<input bind:value={form.code} autocomplete="one-time-code" spellcheck="false" required></label>
     {/if}
     <label>Username<input bind:value={form.username} autocomplete="username" spellcheck="false" required></label>
