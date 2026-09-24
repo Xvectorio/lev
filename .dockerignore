@@ -1,0 +1,8 @@
+.env
+.git
+backups
+ui/node_modules
+ui/dist
+**/__pycache__
+artifacts
+vector/.env

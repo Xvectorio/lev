@@ -1,0 +1,220 @@
+# Lev: docker compose up -d, then open http://localhost:8080 and enter the setup code from
+# `docker compose logs api`. Everything below is optional to change; put overrides in .env.
+name: lev
+x-backend-env: &backend-env
+  PGHOST: postgres
+  PGDATABASE: lev
+  PGUSER: lev
+  LOKI_URL: http://loki:3100
+  AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_MODEL: ${AI_MODEL:-}
+  TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+  TYPESAFE_MODEL: ${TYPESAFE_MODEL:-jev-latest}
+  TYPESAFE_BASE_URL: ${TYPESAFE_BASE_URL:-https://api.typesafe.ai}
+  LOOKBACK_SECONDS: ${LOOKBACK_SECONDS:-600}
+  TRIAGE_CONFIDENCE: ${TRIAGE_CONFIDENCE:-0.8}
+  OBSERVE_CONFIDENCE: ${OBSERVE_CONFIDENCE:-0.6}
+services:
+  init:
+    image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
+    entrypoint: [lev-init]
+    environment:
+      # Only for upgrades from a setup-generated .env; new installs generate their own.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      VECTOR_PASSWORD: ${VECTOR_PASSWORD:-}
+      AGENT_TOKEN: ${AGENT_TOKEN:-}
+    volumes:
+      - secrets:/run/lev
+  edge:
+    image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - secrets:/run/lev:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+  api:
+    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - secrets:/run/lev:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  worker:
+    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    restart: unless-stopped
+    command: [python, worker.py]
+    environment: *backend-env
+    volumes:
+      - secrets:/run/lev:ro
+    depends_on:
+      api:
+        condition: service_healthy
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lev
+      POSTGRES_USER: lev
+      POSTGRES_PASSWORD_FILE: /run/lev/postgres_password
+    volumes:
+      - secrets:/run/lev:ro
+      - postgres_data:/var/lib/postgresql/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U lev -d lev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  loki:
+    image: grafana/loki:3.6.0
+    restart: unless-stopped
+    command: [-config.file=/etc/loki/config.yaml]
+    configs:
+      - source: loki
+        target: /etc/loki/config.yaml
+    volumes:
+      - loki_data:/loki
+    depends_on:
+      loki-init:
+        condition: service_completed_successfully
+  loki-init:
+    image: alpine:3.22
+    command: [chown, '10001:10001', /loki]
+    volumes:
+      - loki_data:/loki
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: lev
+      PGDATABASE: lev
+    entrypoint: [/bin/sh, /backup.sh]
+    configs:
+      - source: backup
+        target: /backup.sh
+      - source: restore-check
+        target: /restore-check.sh
+    volumes:
+      - secrets:/run/lev:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+  vector:
+    image: ghcr.io/jelcke/lev-vector:${LEV_VERSION:-latest}
+    restart: unless-stopped
+    hostname: ${LOCAL_SERVER_ID:-local}
+    group_add: ["${LOCAL_JOURNAL_GID:-65534}"]
+    environment:
+      VECTOR_HOST: ${LOCAL_SERVER_ID:-local}
+      VECTOR_SERVER_ID: ${LOCAL_SERVER_ID:-local}
+      VECTOR_PROJECT_ID: ${LOCAL_PROJECT_ID:-host-infrastructure}
+      VECTOR_ENVIRONMENT: ${LOCAL_ENVIRONMENT:-development}
+      VECTOR_ENDPOINT: http://edge:80
+      VECTOR_CONTAINER_GLOB: SELECT_CONTAINER_ID
+    volumes:
+      - secrets:/run/lev:ro
+      - ./vector/watch.d:/etc/vector/watch.d:ro
+      - /var/log:/host/var/log:ro
+      - /var/lib/docker/containers:/host/docker/containers:ro
+      - vector_data:/var/lib/vector
+    depends_on: [edge, loki]
+configs:
+  loki:
+    content: |
+      auth_enabled: false
+      server:
+        http_listen_port: 3100
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+      schema_config:
+        configs:
+          - from: 2024-01-01
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+      compactor:
+        working_directory: /loki/compactor
+        retention_enabled: true
+        delete_request_store: filesystem
+      limits_config:
+        retention_period: 48h
+        reject_old_samples_max_age: 48h
+        max_query_lookback: 48h
+        max_entries_limit_per_query: 5000
+        max_line_size: 256KB
+      analytics:
+        reporting_enabled: false
+  # Scripts are inline so this file installs on its own; $$ is a literal $ for Compose.
+  backup:
+    content: |
+      set -eu
+      umask 077
+      export PGPASSWORD="$$(cat /run/lev/postgres_password)"
+      mkdir -p /backups
+      while true; do
+        file="/backups/lev-$$(date -u +%Y%m%dT%H%M%SZ).dump"
+        if pg_dump -Fc > "$$file.tmp"; then
+          mv "$$file.tmp" "$$file"
+          find /backups -name '*.dump' -mtime +14 -delete
+          echo "Database backup completed"
+        else
+          rm -f "$$file.tmp"
+          echo "Database backup FAILED" >&2
+        fi
+        sleep 86400
+      done
+  restore-check:
+    content: |
+      set -eu
+      umask 077
+      export PGPASSWORD="$$(cat /run/lev/postgres_password)"
+      check_db="lev_restore_$$(date +%s)"
+      file="/tmp/$$check_db.dump"
+      cleanup() { dropdb --if-exists "$$check_db"; rm -f "$$file"; }
+      trap cleanup EXIT
+      pg_dump -Fc > "$$file"
+      createdb "$$check_db"
+      pg_restore --no-owner --exit-on-error -d "$$check_db" "$$file"
+      count=$$(psql -d "$$check_db" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('incidents','events','jobs','audit','worker_state','users')")
+      test "$$count" = 6
+      psql -d "$$check_db" -Atc 'SELECT count(*) AS retained_problems FROM incidents'
+      echo 'PASS: PostgreSQL dump restored into a disposable database; all application tables are present.'
+volumes:
+  secrets:
+  vector_data:
+  postgres_data:
+  loki_data:
+  caddy_data:
+  caddy_config:

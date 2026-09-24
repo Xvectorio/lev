@@ -1,0 +1,253 @@
+data_dir: /var/lib/vector
+sources:
+  heartbeat:
+    type: demo_logs
+    format: shuffle
+    lines: ['{"service":"lev-heartbeat","level":"info","message":"collector heartbeat"}']
+    interval: 60
+  application_files:
+    type: file
+    include: [/host/var/log/apps/*/*.log]
+    read_from: end
+    multiline:
+      start_pattern: '^\d{4}-\d{2}-\d{2}[T ]|^\{'
+      condition_pattern: '^\d{4}-\d{2}-\d{2}[T ]|^\{'
+      mode: halt_before
+      timeout_ms: 1500
+  container_files:
+    type: file
+    include: [/host/docker/containers/${VECTOR_CONTAINER_GLOB}/*-json.log]
+    read_from: end
+  system_journal:
+    type: journald
+    current_boot_only: false
+    since_now: true
+    extra_args: [--directory=/host/var/log/journal]
+transforms:
+  # Drop-in sources: watch.d/<thing>.yaml defines `src_<thing>` plus a `watch_<thing>` remap setting .lev_service.
+  # watch_none keeps the wildcard valid when watch.d is empty; it never emits.
+  watch_none:
+    type: filter
+    inputs: [heartbeat]
+    condition: 'false'
+  normalize:
+    type: remap
+    inputs: [application_files, container_files, system_journal, heartbeat, "watch_*"]
+    source: |
+      msg = string(.message) ?? ""
+      outer = parse_json(msg) ?? {}
+      msg = string(outer.log) ?? msg
+      app = parse_json(msg) ?? {}
+      msg = string(app.message) ?? string(app.msg) ?? msg
+      stamp = string(app.timestamp) ?? string(app.time) ?? string(outer.time) ?? ""
+      if stamp == "" {
+        prefix = parse_regex(msg, r'^(?P<ts>\d{4}-\d{2}-\d{2}T[^ ]+)') ?? {}
+        stamp = string(prefix.ts) ?? ""
+      }
+      event_time = parse_timestamp(stamp, format: "%+") ?? timestamp(.timestamp) ?? now()
+      path = string(.file) ?? "journal"
+      file_service = parse_regex(path, r'/apps/(?P<service>[^/]+)/') ?? {}
+      service = string(.lev_service) ?? string(app.service) ?? string(file_service.service) ?? string(._SYSTEMD_USER_UNIT) ?? string(.SYSLOG_IDENTIFIER) ?? string(._SYSTEMD_UNIT) ?? "container"
+      kv = parse_logfmt(msg) ?? {}
+      level = downcase(string(.lev_level) ?? string(app.level) ?? string(app.severity) ?? string(kv.level) ?? "")
+      if level == "warning" { level = "warn" }
+      if level == "err" { level = "error" }
+      if level == "critical" || level == "crit" || level == "emerg" || level == "alert" { level = "fatal" }
+      if level == "notice" { level = "info" }
+      if level == "trace" { level = "debug" }
+      priority = if exists(.PRIORITY) { to_int(.PRIORITY) ?? -1 } else { -1 }
+      if !includes(["debug", "info", "warn", "error", "fatal"], level) {
+        if priority >= 0 && priority <= 7 {
+          level = if priority <= 2 { "fatal" } else if priority == 3 { "error" } else if priority == 4 { "warn" } else if priority == 7 { "debug" } else { "info" }
+        } else {
+          severity_text = replace(msg, r'(?i)\b(?:not[ -]+fatal|non[ -]?fatal|no errors?)\b', "")
+          level = if match(severity_text, r'(?i)\b(fatal|panic)\b') { "fatal" } else if match(severity_text, r'(?i)\b(error|exception|failed|failure|out of memory|no space left)\b') { "error" } else if match(severity_text, r'(?i)\b(warn|warning)\b') { "warn" } else { "info" }
+        }
+      }
+      # dockerd/BuildKit logs this when a finished build's client session closes: routine, not a failure.
+      if match(msg, r'healthcheck failed.*only one connection allowed') { level = "info" }
+      # Retain IDs in the message body, never in Loki labels.
+      if exists(app.request_id) { msg = msg + " request_id=" + (to_string(app.request_id) ?? "") }
+      if exists(app.order_id) { msg = msg + " order_id=" + (to_string(app.order_id) ?? "") }
+      # Whitelist output fields; redact before forwarding or disk buffering.
+      msg = replace(msg, r'(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+', "Bearer [REDACTED]")
+      msg = replace(msg, r'(?i)(password|passwd|secret|token|api[_-]?key|authorization|cookie)["\s]*[:=]["\s]*[^\s,";}]+', "[REDACTED]")
+      . = {"timestamp": event_time, "message": msg, "level": level, "host": "${VECTOR_HOST}", "server_id": "${VECTOR_SERVER_ID}", "project_id": "${VECTOR_PROJECT_ID}", "environment": "${VECTOR_ENVIRONMENT}", "service": service, "source": path, "process_id": to_string(._PID) ?? ""}
+  multiline:
+    type: reduce
+    inputs: [normalize]
+    group_by: [host, service, source, process_id]
+    starts_when: |
+      !match(string!(.message), r'^\s+|^Caused by:|^Traceback|^[A-Za-z.]+(?:Error|Exception):')
+    expire_after_ms: 1500
+    merge_strategies:
+      message: concat_newline
+      timestamp: discard
+      level: discard
+  relevant:
+    type: filter
+    inputs: [multiline]
+    condition: '(.level == "warn" || .level == "error" || .level == "fatal") || .service == "lev-heartbeat"'
+sinks:
+  loki:
+    type: loki
+    inputs: [relevant]
+    endpoint: ${VECTOR_ENDPOINT}
+    auth:
+      strategy: basic
+      user: vector
+      password: ${VECTOR_PASSWORD}
+    labels:
+      project_id: '{{ project_id }}'
+      server_id: '{{ server_id }}'
+      host: '{{ host }}'
+      service: '{{ service }}'
+      environment: '{{ environment }}'
+    encoding:
+      codec: json
+    acknowledgements:
+      enabled: true
+    buffer:
+      type: disk
+      max_size: 536870912
+      when_full: block
+    healthcheck:
+      enabled: false
+tests:
+  - name: redact secrets and preserve request identifiers
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: '{"timestamp":"2026-09-24T01:00:00Z","service":"checkout","level":"error","message":"connection failed password=hunter2 Authorization: Bearer abc123.def456","request_id":"req-42","secret":"must-not-leak"}'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+              assert_eq!(.service, "checkout")
+              assert_eq!(.project_id, "test-project")
+              assert_eq!(.server_id, "test-server")
+              assert!(!contains(string!(.message), "hunter2"))
+              assert!(!contains(string!(.message), "abc123"))
+              assert!(contains(string!(.message), "req-42"))
+              assert!(!exists(.secret))
+              assert_eq!(.timestamp, t'2026-09-24T01:00:00Z')
+  - name: parse Docker log envelopes
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          file: /host/docker/containers/test/test-json.log
+          message: '{"log":"ERROR database connection failed\n","time":"2026-09-24T01:01:00Z","stream":"stderr"}'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+              assert!(contains(string!(.message), "database connection failed"))
+              assert_eq!(.timestamp, t'2026-09-24T01:01:00Z')
+  - name: join exception continuations
+    inputs:
+      - insert_at: multiline
+        type: log
+        log_fields:
+          host: test-host
+          service: app
+          source: fixture
+          level: error
+          message: 'ERROR request failed'
+      - insert_at: multiline
+        type: log
+        log_fields:
+          host: test-host
+          service: app
+          source: fixture
+          level: info
+          message: '  at example.py:10'
+    outputs:
+      - extract_from: multiline
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "ERROR request failed\n  at example.py:10")
+              assert_eq!(.level, "error")
+
+  - name: forward warnings through the final filter
+    inputs:
+      - insert_at: relevant
+        type: log
+        log_fields:
+          level: warn
+          service: systemd
+          message: journal warning
+    outputs:
+      - extract_from: relevant
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.message, "journal warning")'
+
+  - name: journal priority wins over fatal words
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: Errors from xkbcomp are not fatal to the X server
+          PRIORITY: "4"
+          _SYSTEMD_UNIT: user@1000.service
+          _SYSTEMD_USER_UNIT: app-terminal.scope
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+              assert_eq!(.service, "app-terminal.scope")
+  - name: logfmt severity wins over failure words
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'level=info msg="Container failed to exit during planned restart"'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.level, "info")'
+  - name: fallback severity understands fatal negation
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: Warning - non-fatal diagnostic, not fatal
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.level, "warn")'
+  - name: BuildKit session teardown is not a failure
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          _SYSTEMD_UNIT: docker.service
+          message: 'time="2026-09-24T15:12:00.3+02:00" level=error msg="healthcheck failed fatally" error="session healthcheck failed fatally: Unavailable: connection error: desc = \\"transport: Error while dialing: only one connection allowed\\""'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.level, "info")'
+  - name: other healthcheck failures still warn
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          _SYSTEMD_UNIT: docker.service
+          message: 'level=warning msg="healthcheck failed" container=abc error="connection refused"'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.level, "warn")'

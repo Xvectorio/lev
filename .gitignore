@@ -1,0 +1,12 @@
+.env
+.venv/
+backups/
+__pycache__/
+ui/node_modules/
+ui/dist/
+artifacts/
+vector/.env
+compose.override.yaml
+vector/watch.d/*.yaml
+STATUS.md
+CLASSIFICATION_REVIEW.md

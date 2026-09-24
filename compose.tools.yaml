@@ -1,0 +1,26 @@
+name: lev-tools
+services:
+  ui-lock:
+    image: node:22-alpine
+    working_dir: /tmp
+    entrypoint: [sh, -ec]
+    command: ['mkdir -p /tmp/lock; cd /tmp/lock; cp /project/ui/package.json .; npm install --package-lock-only --cache /tmp/npm; cp package-lock.json /project/ui/']
+    volumes:
+      - .:/project
+  vector-check:
+    image: timberio/vector:0.51.1-debian
+    entrypoint: [vector, validate, --no-environment, --config-dir, /etc/vector/watch.d, /etc/vector/vector.yaml]
+    environment:
+      VECTOR_HOST: test-host
+      VECTOR_SERVER_ID: test-server
+      VECTOR_PROJECT_ID: test-project
+      VECTOR_ENVIRONMENT: test
+      VECTOR_ENDPOINT: http://localhost
+      VECTOR_PASSWORD: validation-only
+      VECTOR_CONTAINER_GLOB: test-id
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./vector/watch.d:/etc/vector/watch.d:ro
+  vector-test:
+    extends: vector-check
+    entrypoint: [sh, -c, 'set -- /etc/vector/watch.d/*.yaml; [ -e "$$1" ] || set --; exec vector test /etc/vector/vector.yaml "$$@"']

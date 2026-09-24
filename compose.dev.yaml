@@ -1,0 +1,67 @@
+# Development overlay: build images from source and run checks. Enable it with
+# COMPOSE_FILE=compose.yaml:compose.dev.yaml in .env (add :compose.override.yaml if you have one).
+services:
+  init:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile.edge
+  edge:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile.edge
+  api:
+    build: ./backend
+  vector:
+    build: ./vector
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+  test:
+    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    profiles: [tools]
+    command: [python, test_system.py]
+    environment:
+      PGHOST: postgres
+      PGDATABASE: lev
+      PGUSER: lev
+      LOKI_URL: http://test-loki:3100
+    volumes:
+      - secrets:/run/lev:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      test-loki:
+        condition: service_started
+  eval-triage:
+    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    user: "0:0"
+    profiles: [tools]
+    entrypoint: [python, evaluate_triage.py]
+    environment:
+      PGHOST: postgres
+      PGDATABASE: lev
+      PGUSER: lev
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      TYPESAFE_MODEL: ${TYPESAFE_MODEL:-jev-latest}
+      TYPESAFE_BASE_URL: ${TYPESAFE_BASE_URL:-https://api.typesafe.ai}
+    volumes:
+      - secrets:/run/lev:ro
+      - ./backend:/app:ro
+      - ./artifacts:/results
+  test-loki:
+    image: grafana/loki:3.6.0
+    profiles: [tools]
+    user: "0:0"  # disposable, no volume: /loki must be writable
+    command: [-config.file=/etc/loki/local-config.yaml]
+  browser-check:
+    image: mcr.microsoft.com/playwright:v1.58.2-noble
+    profiles: [tools]
+    network_mode: service:edge
+    entrypoint: [sh, -ec]
+    command: ['npm install --prefix /tmp/browser playwright@1.58.2 --no-audit --no-fund >/dev/null; node /checks/browser.cjs']
+    environment:
+      LEV_ADMIN_USER: ${LEV_ADMIN_USER:-admin}
+      LEV_ADMIN_PASSWORD: ${LEV_ADMIN_PASSWORD:-}
+    volumes:
+      - ./ops/browser.cjs:/checks/browser.cjs:ro
+      - ./artifacts:/artifacts
+    depends_on: [edge]

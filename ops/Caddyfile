@@ -1,0 +1,23 @@
+{$SITE_ADDRESS} {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        Content-Security-Policy "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    }
+    handle /loki/api/v1/push {
+        basic_auth {
+            vector {$VECTOR_HASH}
+        }
+        reverse_proxy loki:3100
+    }
+    # Operator auth is a session cookie checked by the API; agents use the bearer token.
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

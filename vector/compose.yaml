@@ -1,0 +1,23 @@
+name: lev-source
+services:
+  vector:
+    image: ghcr.io/jelcke/lev-vector:${LEV_VERSION:-latest}
+    restart: unless-stopped
+    hostname: ${VECTOR_HOST:?Set a stable host name}
+    group_add:
+      - ${JOURNAL_GID:?Set the host systemd-journal group ID}
+    environment:
+      VECTOR_HOST: ${VECTOR_HOST:?Set a stable host name}
+      VECTOR_SERVER_ID: ${VECTOR_SERVER_ID:?Set a stable server ID}
+      VECTOR_PROJECT_ID: ${VECTOR_PROJECT_ID:?Set a project ID}
+      VECTOR_ENVIRONMENT: ${VECTOR_ENVIRONMENT:-production}
+      VECTOR_ENDPOINT: ${VECTOR_ENDPOINT:?Set the central HTTPS URL}
+      VECTOR_PASSWORD: ${VECTOR_PASSWORD:?Set the ingestion password}
+      VECTOR_CONTAINER_GLOB: ${VECTOR_CONTAINER_GLOB:-SELECT_CONTAINER_ID}
+    volumes:
+      - ./watch.d:/etc/vector/watch.d:ro
+      - /var/log:/host/var/log:ro
+      - /var/lib/docker/containers:/host/docker/containers:ro
+      - vector_data:/var/lib/vector
+volumes:
+  vector_data:

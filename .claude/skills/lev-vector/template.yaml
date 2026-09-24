@@ -1,0 +1,39 @@
+# watch.d/<thing>.yaml — collect <thing>'s logs for Lev.
+# Found by: <how you found it, e.g. `error_log` in /etc/nginx/nginx.conf>. Container IDs: <name> -> <id> (refresh after recreate).
+sources:
+  src_<thing>:
+    type: file
+    include: [/host/var/log/<thing>/error.log]   # host path mounted under /host (compose volumes)
+    read_from: end                               # never backfill old history
+    # Only for multi-line stack traces; the start pattern must match the first line of each entry:
+    # multiline: {start_pattern: '^\d{4}-\d{2}-\d{2}', condition_pattern: '^\d{4}-\d{2}-\d{2}', mode: halt_before, timeout_ms: 1500}
+transforms:
+  watch_<thing>:
+    type: remap
+    inputs: [src_<thing>]
+    source: |
+      .lev_service = "<thing>"
+      # Only when the format has a level the shared parser misses (JSON level/severity, logfmt level= and journald priority already work):
+      # m = parse_regex(string!(.message), r'\[(?P<level>\w+)\]') ?? {}
+      # if exists(m.level) { .lev_level = m.level }
+      # Only for secret formats the shared redaction misses:
+      # .message = replace(string!(.message), r'<pattern>', "[REDACTED]")
+tests:
+  - name: <thing> error reaches Lev
+    inputs:
+      - insert_at: watch_<thing>
+        type: log
+        log_fields:
+          message: '<a real error line from the file, secrets replaced>'
+    outputs:
+      - extract_from: relevant
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.service, "<thing>"); assert_eq!(.level, "error")'
+  - name: <thing> routine line is dropped
+    inputs:
+      - insert_at: watch_<thing>
+        type: log
+        log_fields:
+          message: '<a real routine/info line from the file>'
+    no_outputs_from: [relevant]
