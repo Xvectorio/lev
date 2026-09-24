@@ -229,15 +229,21 @@ Return a result for **every** approved check. Failed checks return the issue to 
 
 Lev listens on all interfaces, over HTTP on port 8080, by default; set `BIND_ADDRESS=127.0.0.1` to keep it reachable from the server only. Docker-published ports bypass host firewalls such as UFW, so on an internet-facing host restrict access at the network edge or with `BIND_ADDRESS`.
 
-For a public server with HTTPS, point DNS to it and set:
+For HTTPS, point a DNS name at the server and set in `.env`:
 
 ```dotenv
 SITE_ADDRESS=logs.example.com
 HTTP_PORT=80
 HTTPS_PORT=443
+#CLOUDFLARE_API_TOKEN=   # only for the DNS option below
 ```
 
-Then `docker compose up -d`. Caddy obtains/renews HTTPS certificates when DNS and ports 80/443 are reachable. If the name isn't reachable from the internet (e.g. it resolves to a LAN address) and its DNS is on Cloudflare, also set `CLOUDFLARE_API_TOKEN` (a token with Zone.DNS:Edit on that zone only); Caddy then uses the DNS-01 challenge and needs no open ports. Without the token nothing changes. PostgreSQL, Loki and FastAPI publish no host ports. Operator accounts are managed with `reset_admin.py` (see above); there is no self-service signup. Session cookies are marked Secure when served over HTTPS. Failed logins are delayed by one second, but there is no lockout, so use a long password on an internet-facing server.
+Then `docker compose up -d`; `docker compose logs edge | grep "certificate obtained"` confirms. Caddy gets and renews Let's Encrypt certificates in one of two ways:
+
+- **Public server:** ports 80 and 443 reachable from the internet. No token needed.
+- **LAN-only or firewalled name, DNS on Cloudflare:** set `CLOUDFLARE_API_TOKEN` and Caddy uses the DNS challenge; no open ports needed, and the public DNS record may point to a private IP. Create the token under *My Profile → API Tokens* with only **Zone → DNS → Edit** on that one zone, without an expiry date (renewals, about every 60 days, need it; a failing renewal shows in the edge logs weeks before the certificate expires). Optionally restrict it to your public IP. Rotate by replacing it in `.env`, `docker compose up -d edge`, then deleting the old token.
+
+Source servers then use `VECTOR_ENDPOINT=https://<name>`. PostgreSQL, Loki and FastAPI publish no host ports. Operator accounts are managed with `reset_admin.py` (see above); there is no self-service signup. Session cookies are marked Secure when served over HTTPS. Failed logins are delayed by one second, but there is no lockout, so use a long password on an internet-facing server.
 
 ## Backups and restore
 
