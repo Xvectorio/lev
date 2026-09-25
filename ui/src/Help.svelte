@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  // Inline docs, condensed from README.md (keep them in sync). A line starting with "$ " is a command, "- " a list item, "# " a subheading.
+  // Inline docs, condensed from docs/guide.md (keep them in sync). A line starting with "$ " is a command, "- " a list item, "# " a subheading.
   const TOPICS: Record<string, { title: string; body: string[] }> = {
     incidents: { title: 'How incidents work', body: [
       'Vector ships warn/error/fatal lines to Loki. Every 60 s the worker groups them by fingerprint (IDs, UUIDs, hex values and durations are normalized), so repeats of one problem become one incident with a count.',
