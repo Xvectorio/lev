@@ -47,6 +47,8 @@
 .sources th{text-align:left;font-size:11px;color:var(--muted);font-weight:600;padding:10px 20px;background:#edf2f8}
 .sources td{padding:12px 20px;border-top:1px solid var(--line);vertical-align:top}
 .chip{padding:3px 8px;margin:0 6px 6px 0;font-size:11px}.chip b{font-weight:400;color:var(--muted);margin-left:4px}
+.hide{padding:0 4px;margin:0 8px 6px 0;border:0;background:none;color:var(--muted);font-size:10px;line-height:1;opacity:.5}.hide:hover,.hide:focus-visible{opacity:1}
+.sources td>.chip+.hide{margin-left:-6px}.sources td:first-child>.hide{float:right;margin:0 0 0 8px}
 .source-state{font-size:10px;font-weight:700;border-radius:4px;padding:3px 7px;white-space:nowrap}
 .source-state.live{background:#dcefe9;color:#155b52}.source-state.stale{background:#fbe7eb;color:#a4273c}.source-state.no-heartbeat{background:#fbf0d6;color:#7d5916}
 [data-theme="dark"] .sources th{background:#22343e;color:#c2d3dd}

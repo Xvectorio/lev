@@ -28,6 +28,7 @@
     sources: { title: 'Sources and collection', body: [
       'Every server runs Vector, which reads journald, Docker and log files, joins stack traces, redacts secrets and forwards only warn+ lines plus a heartbeat once a minute. A source is live while its heartbeat is recent; incidents only resolve while their source is live.',
       'This Lev host already collects its own journal and /var/log/apps/<service>/*.log as server local.',
+      'The small ✕ next to a source or one of its logs hides it on this page (this browser only); Settings → Hidden sources and logs unhides them.',
       'See the ? on Vector sources for adding a server, and on Connect for agents.',
     ]},
     collection: { title: 'How collection works', body: [

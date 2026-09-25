@@ -96,6 +96,8 @@ The application does **not contain an autonomous SSH executor**. Agent tasks and
 
 ![Sources page: collection settings and every Vector source with its heartbeat and services](screenshots/sources.png)
 
+The small ✕ next to a source, or next to one of its logs (services), hides it on the Sources page in this browser only; **Settings → Hidden sources and logs** unhides them. Hiding changes nothing in collection or triage.
+
 The central Compose stack now includes Vector for this host. It reads the persistent system journal through a read-only `/var/log` mount and watches `/var/log/apps/<service>/*.log` if those files exist. It forwards warnings/errors/fatal events and a collector heartbeat through Caddy to Loki, with a persistent disk buffer and journal checkpoints. Collection starts with new events rather than importing the whole journal.
 
 This host's identity defaults to **server `local`**, **project `host-infrastructure`**, **environment `development`**. In **Log explorer**, set **Server ID** to `local` to see these events. Matching incidents appear automatically after the worker's next collection pass.

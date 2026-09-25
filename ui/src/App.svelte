@@ -65,18 +65,22 @@
   let sourceText = $state(''), sourceFilters = $state<Record<string, string>>({});
   const sourceValues = $derived(Object.fromEntries(SOURCE_FIELDS.map(f => [f, [...new Set((sources?.sources ?? [])
     .flatMap(s => f === 'service' ? Object.keys(s.services) : [String(s[f as keyof Source])]))].sort()])));
+  // Sources and their logs (services) hidden from the Sources page; this browser only, unhide in Settings.
+  let hidden = $state<string[]>((() => { try { return JSON.parse(localStorage.getItem('lev-hidden') ?? '[]'); } catch { return []; } })());
+  $effect(() => { try { localStorage.setItem('lev-hidden', JSON.stringify(hidden)); } catch {} });
+  const sourceKey = (s: Source) => `${s.project_id}/${s.server_id}`;
   const sourceRows = $derived.by(() => {
     const terms = [...sourceText.toLowerCase().matchAll(/(not\s+)?(?:(\w+)=)?("[^"]*"?|\S+)?/g)]
       .map(([, not, field, v = '']) => ({ not: !!not, field, v: v.replace(/"/g, ''), exact: false })).filter(t => t.v)
       .concat(Object.entries(sourceFilters).map(([field, v]) => ({ not: false, field, v: v.toLowerCase(), exact: true })));
     const match = (t: typeof terms[number], name: string) => (t.exact ? name.toLowerCase() === t.v : name.toLowerCase().includes(t.v)) !== t.not;
-    return (sources?.sources ?? []).map(s => {
+    return (sources?.sources ?? []).filter(s => !hidden.includes(sourceKey(s))).map(s => {
       const values = (field?: string) => field === 'service' ? Object.keys(s.services)
         : field ? (SOURCE_FIELDS.includes(field) ? [String(s[field as keyof Source])] : [])
         : [s.project_id, s.server_id, s.host, s.environment, ...Object.keys(s.services)];
       const hit = (t: typeof terms[number]) => t.not ? values(t.field).every(x => match(t, x)) : values(t.field).some(x => match(t, x));
       // A service filter also narrows the service chips shown in the row.
-      const services = Object.entries(s.services).filter(([n]) => terms.every(t => t.field !== 'service' || match(t, n))).sort((a, b) => b[1] - a[1]);
+      const services = Object.entries(s.services).filter(([n]) => !hidden.includes(`${sourceKey(s)}/${n}`) && terms.every(t => t.field !== 'service' || match(t, n))).sort((a, b) => b[1] - a[1]);
       return { s, services, show: terms.every(hit) };
     }).filter(r => r.show);
   });
@@ -651,16 +655,16 @@
             {#each sources.workers as w}<div><dt>{w.name} last run</dt><dd>{ago(Date.now() - Date.parse(w.heartbeat))}{#if Number(w.checkpoint_ns) > 0}&nbsp;· checkpoint {ago(Date.now() - Number(BigInt(w.checkpoint_ns)/1000000n))}{/if}{#if w.error}<span class="severity error">{w.error}</span>{/if}</dd></div>{/each}
           </dl>
         </section>
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Vector sources <Help topic="add-source" /></h2><span>{sourceRows.length === sources.sources.length ? '' : `${sourceRows.length} of `}{sources.sources.length} servers</span></div>
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Vector sources <Help topic="add-source" /></h2><span>{sourceRows.length === sources.sources.length ? '' : `${sourceRows.length} of `}{sources.sources.length} servers{hidden.length ? ` · ${hidden.length} hidden` : ''}</span></div>
           <div class="source-search"><QueryBar id="source-query" fields={SOURCE_FIELDS} values={sourceValues} bind:text={sourceText} bind:filters={sourceFilters} placeholder={'server_id=web-01 service=nginx "upstream" NOT kernel'} /></div>
           <div class="table-scroll"><table class="sources">
             <thead><tr><th>Project / server</th><th>Host · environment</th><th>Status</th><th>Last heartbeat</th><th>Events 24h</th><th>Services (warn+ events, 24h)</th></tr></thead>
             <tbody>{#each sourceRows as { s, services }}<tr>
-              <td><b>{s.project_id}</b><br>{s.server_id}</td><td>{s.host}<br><span class="muted">{s.environment}</span></td>
+              <td><button class="hide" title="Hide this source (unhide in Settings)" aria-label="Hide {sourceKey(s)}" onclick={() => hidden = [...hidden, sourceKey(s)]}>✕</button><b>{s.project_id}</b><br>{s.server_id}</td><td>{s.host}<br><span class="muted">{s.environment}</span></td>
               <td><span class="source-state {sourceState(s).replace(' ','-')}">{sourceState(s)}</span></td>
               <td>{s.last_heartbeat_ns ? ago(Date.now() - Number(BigInt(s.last_heartbeat_ns)/1000000n)) : 'none in 10 min'}</td>
               <td>{s.events_24h.toLocaleString()}</td>
-              <td>{#each services as [name, count]}<button class="chip" onclick={() => {text = ''; filters = {}; setFilter('service', name); setFilter('server_id', s.server_id); setFilter('project_id', s.project_id); switchView('logs');}}>{name} <b>{count}</b></button>{:else}<span class="muted">heartbeat only</span>{/each}</td>
+              <td>{#each services as [name, count]}<button class="chip" onclick={() => {text = ''; filters = {}; setFilter('service', name); setFilter('server_id', s.server_id); setFilter('project_id', s.project_id); switchView('logs');}}>{name} <b>{count}</b></button><button class="hide" title="Hide this log (unhide in Settings)" aria-label="Hide {name} on {s.server_id}" onclick={() => hidden = [...hidden, `${sourceKey(s)}/${name}`]}>✕</button>{:else}<span class="muted">heartbeat only</span>{/each}</td>
             </tr>{:else}<tr><td colspan="6" class="empty">{sources.sources.length ? 'No source matches this search.' : 'No Vector instance has forwarded logs in the last 24 hours.'}</td></tr>{/each}</tbody>
           </table></div>
         </section>
@@ -672,6 +676,10 @@
     {:else if view === 'settings'}
       <section class="log-panel admin-panel"><div class="panel-heading"><h2>Appearance</h2><span>this browser only</span></div>
         <div class="policy-form"><label>Theme<select bind:value={theme}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+      </section>
+      <section class="log-panel admin-panel"><div class="panel-heading"><h2>Hidden sources and logs</h2><span>this browser only</span></div>
+        <div class="connect">{#each hidden as h}<button class="chip" title="Unhide" onclick={() => hidden = hidden.filter(x => x !== h)}>{h} <b>✕</b></button>{:else}<span class="muted">Nothing hidden. Use ✕ on the Sources page to hide a source or one of its logs.</span>{/each}</div>
+        {#if hidden.length}<div class="task-actions connect"><button onclick={() => hidden = []}>Unhide all</button></div>{/if}
       </section>
       <section class="log-panel admin-panel"><div class="panel-heading"><h2>AI providers</h2><span>saved values override .env; clear one to fall back to it</span></div>
         <form class="policy-form" onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
