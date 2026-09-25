@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import worker
+from core import db
 
 # Expectations set before evaluation; holdout cases are not used for prompt adjustments.
 CASES = [
@@ -35,7 +36,7 @@ CASES = [
 ]
 
 
-def evaluate(case, baseline):
+def evaluate(case, baseline, policy):
     split, name, category, stages, message, context, count = case
     item = {'labels': {'host':'evaluation-host','server_id':'evaluation-host','project_id':'evaluation',
                       'environment':'development','service':name}, 'occurrences':count,
@@ -58,11 +59,11 @@ def evaluate(case, baseline):
         response.raise_for_status()
         result = response.json()
         c,a = result['answers']['category'],result['answers']['actionability']
-        confident = min(c['confidence'],a['confidence']) >= worker.CONFIDENCE and c['choice'] != 'unknown'
+        confident = min(c['confidence'],a['confidence']) >= policy['config']['thresholds']['investigate'] and c['choice'] != 'unknown'
         stage = ('ready' if a['choice']=='investigate' else 'observing') if confident and a['choice']!='unknown' else 'review'
     else:
-        result = worker.classify(item,evidence,'evaluation-'+uuid.uuid4().hex)
-        stage = worker.route_triage(result)
+        result = worker.classify(item,evidence,'evaluation-'+uuid.uuid4().hex,policy)
+        stage = worker.route_triage(result,policy['config']['thresholds'])
     return {'split':split,'case':name,'expected_stages':stages,'stage':stage,'route_correct':stage in stages,
             'expected_category':category,'category_correct':None if category is None else result['answers']['category']['choice']==category,
             'latency_seconds':round(time.monotonic()-started,3),'result':result}
@@ -70,13 +71,16 @@ def evaluate(case, baseline):
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--baseline',action='store_true');args=parser.parse_args()
+    with db() as conn:
+        policy=worker.active_policy(conn)  # scores the policy active in the database
+    name='baseline' if args.baseline else 'policy-'+str(policy['id'])
     # Check output permissions before spending tokens.
-    output='/results/triage-'+('baseline' if args.baseline else worker.POLICY_VERSION)+'.json'
+    output='/results/triage-'+name+'.json'
     with open(output,'w') as f: f.write('{}')
     with ThreadPoolExecutor(max_workers=3) as pool:
-        results=list(pool.map(lambda case:evaluate(case,args.baseline),CASES))
-    report={'policy':'baseline' if args.baseline else worker.POLICY_VERSION,'evaluated_at':time.time(),
-            'thresholds':{'investigate':worker.CONFIDENCE,'observe':worker.OBSERVE_CONFIDENCE},'results':results}
+        results=list(pool.map(lambda case:evaluate(case,args.baseline,policy),CASES))
+    report={'policy':name,'evaluated_at':time.time(),
+            'thresholds':policy['config']['thresholds'],'results':results}
     path='/results/triage-'+report['policy']+'.json'
     with open(path,'w') as f: json.dump(report,f,indent=2)
     for split in ('dev','holdout'):

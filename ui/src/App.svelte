@@ -3,8 +3,8 @@
   type Labels = { host: string; server_id: string; project_id: string; service: string; environment: string };
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
   type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
-  type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string}}[] };
-  type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
+  type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string}}[]; label: {route: string; category: string | null; actor: string; at: string} | null };
+  type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
   type Source = { project_id: string; server_id: string; host: string; environment: string; services: Record<string, number>; events_24h: number; last_heartbeat_ns: string | null };
   type JevJob = { id: string; incident_id: string; status: string; attempts: number; error: string | null; created_at: string; completed_at: string | null; next_attempt: string; triage: Incident['triage']; labels: Labels; title: string };
   type Jev = { paused: boolean; configured: boolean; settings: Record<string, string | number>; last_24h: {status: string; count: number}[]; routes_24h: {choice: string | null; count: number; avg_confidence: number | null}[]; queue: JevJob[]; jobs: JevJob[] };
@@ -204,7 +204,11 @@
 
   async function openIncident(id: string) {
     error = '';
-    try { selected = await api('/incidents/' + id); }
+    try {
+      const next: Detail = await api('/incidents/' + id);
+      if (next.id !== selected?.id) incidentVerdict = {route: next.label?.route ?? '', category: next.label?.category ?? next.category};
+      selected = next;
+    }
     catch (e) { error = (e as Error).message; }
   }
 
@@ -292,8 +296,115 @@
       await loadJev(); await refreshStatus();
     } catch (e) { error = (e as Error).message; }
   }
+  // Jev tuning: immutable policy versions, operator labels and threshold what-ifs over stored answers.
+  type Criterion = string | Record<string, string | string[]>;
+  type PolicyConfig = { model: string; thresholds: {investigate: number; observe: number}; instructions: {category: string; actionability: string}; categories: Record<string, Criterion>; actionability: Record<string, Criterion>; checks: Record<string, string[]> };
+  type Policy = { id: number; created_at: string; author: string; note: string; config: PolicyConfig };
+  type Answer = {choice: string; confidence: number};
+  type Insight = { policy_id: number; active_thresholds: PolicyConfig['thresholds']; thresholds: PolicyConfig['thresholds']; triaged: number; stages: Record<string, number>; categories: Record<string, number>; histogram: Record<string, number[]>; near_threshold: number; labelled: number; confusion: Record<string, Record<string, number>>; route_accuracy: number | null; false_ready: number; missed_ready: number; category_accuracy: number | null; weak: {service: string; category: string; action: string; count: number}[]; to_label: {id: string; title: string; labels: Labels; stage: string; action: Answer; category: Answer; dismissed: boolean}[] };
+  type Row = { name: string; what: string; not_for: string; examples: string; checks: string };
+  const ROUTES = ['ready', 'observing', 'review'];
+  let jevTab = $state<'overview' | 'policy' | 'tune'>('overview');
+  let policies = $state<{active: number; versions: Policy[]} | null>(null);
+  let insightData = $state<Insight | null>(null);
+  let gates = $state({investigate: 0.8, observe: 0.6});
+  let draft = $state<{base: number; model: string; note: string; thresholds: PolicyConfig['thresholds']; instructions: PolicyConfig['instructions']; categories: Row[]; actionability: Row[]} | null>(null);
+  let verdicts = $state<Record<string, {route: string; category: string; example: boolean}>>({});
+  const lines = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean);
+  function toRows(criteria: Record<string, Criterion>, checks: Record<string, string[]> = {}): Row[] {
+    return Object.entries(criteria).map(([name, c]) => {
+      const o = typeof c === 'string' ? {what: c} : c;
+      const text = (v: unknown) => Array.isArray(v) ? v.join('\n') : String(v ?? '');
+      return {name, what: text(o.what), not_for: text(o.not_for), examples: text(o.examples), checks: (checks[name] ?? []).join('\n')};
+    });
+  }
+  // Plain text when there is only a description: the payload stays identical to the pre-editor policy.
+  const fromRow = (r: Row): Criterion => !r.not_for.trim() && !lines(r.examples).length ? r.what.trim()
+    : {what: r.what.trim(), ...(r.not_for.trim() ? {not_for: r.not_for.trim()} : {}), ...(lines(r.examples).length ? {examples: lines(r.examples)} : {})};
+  const activePolicy = $derived(policies?.versions.find(p => p.id === policies?.active));
+  function editDraft(from = activePolicy) {
+    if (!from) return;
+    const c = from.config;
+    draft = {base: from.id, model: c.model, note: '', thresholds: {...c.thresholds}, instructions: {...c.instructions},
+             categories: toRows(c.categories, c.checks), actionability: toRows(c.actionability)};
+  }
+  async function loadPolicies() {
+    policies = await api('/jev/policy');
+    if (!draft) editDraft();
+  }
+  async function loadInsight(what?: PolicyConfig['thresholds']) {
+    insightData = await api('/jev/insight' + (what ? '?' + new URLSearchParams({investigate: String(what.investigate), observe: String(what.observe)}) : ''));
+    if (!what) gates = {...insightData!.active_thresholds};
+    for (const item of insightData!.to_label) verdicts[item.id] ??= {route: '', category: item.category.choice, example: false};
+  }
+  async function savePolicy(activate = true) {
+    if (!draft) return;
+    error = '';
+    const d = draft;
+    const config: PolicyConfig = {model: d.model.trim(), thresholds: d.thresholds, instructions: d.instructions,
+      categories: Object.fromEntries(d.categories.map(r => [r.name.trim(), fromRow(r)])),
+      actionability: Object.fromEntries(d.actionability.map(r => [r.name, fromRow(r)])),
+      checks: Object.fromEntries(d.categories.map(r => [r.name.trim(), lines(r.checks)]))};
+    try {
+      const {id} = await api('/jev/policy', {method: 'POST', headers: POST, body: JSON.stringify({config, note: d.note, activate})});
+      notice = `Policy ${id} saved${activate ? ' and active. New triage uses it; use Triage again to re-judge existing incidents' : ''}.`;
+      draft = null; await loadPolicies(); await loadInsight(); await refreshStatus();
+    } catch (e) { error = (e as Error).message; }
+  }
+  async function activatePolicy(id: number) {
+    try { await api(`/jev/policy/${id}/activate`, {method: 'POST', headers: POST}); notice = `Policy ${id} is active.`; await loadPolicies(); await loadInsight(); await refreshStatus(); }
+    catch (e) { error = (e as Error).message; }
+  }
+  async function saveThresholds() {
+    if (!draft) editDraft();
+    if (!draft) return;
+    draft.thresholds = {...gates}; draft.note = draft.note || `Gates ${gates.investigate} / ${gates.observe} from the tune wizard`;
+    await savePolicy();
+  }
+  async function saveLabel(id: string, route: string | null, category = '') {
+    error = '';
+    try {
+      await api(`/incidents/${id}/label`, {method: 'POST', headers: POST, body: JSON.stringify({route, category: category || null})});
+      notice = route ? 'Verdict saved. It counts towards Jev accuracy and threshold tuning.' : 'Verdict removed.';
+      if (selected?.id === id) await openIncident(id);
+    } catch (e) { error = (e as Error).message; }
+  }
+  async function labelCandidate(item: Insight['to_label'][number]) {
+    const v = verdicts[item.id];
+    if (!v?.route) return;
+    await saveLabel(item.id, v.route, v.category);
+    if (v.example && v.category) {
+      if (!draft) editDraft();
+      const row = draft?.categories.find(r => r.name === v.category);
+      if (row) { row.examples = [row.examples, item.title.slice(0, 200)].filter(Boolean).join('\n'); notice += ' Added as an example to the draft policy; review and save it under Policy.'; }
+    }
+    await loadInsight(gates);
+  }
+  async function loadJevTab(tab = jevTab) {
+    jevTab = tab; error = '';
+    try {
+      if (tab === 'overview') { await loadJev(); await loadInsight(); }
+      else if (tab === 'policy') await loadPolicies();
+      else { await loadPolicies(); await loadInsight(); }
+    } catch (e) { error = (e as Error).message; }
+  }
+  let incidentVerdict = $state({route: '', category: ''});
+  const categoryNames = $derived(status?.categories ?? []);
+  const CHOICES = ['investigate', 'observe', 'unknown'];
+  const CHOICE_HELP: Record<string, string> = {
+    investigate: 'Jev judged a real, unresolved failure that an agent should investigate.',
+    observe: 'Jev judged it benign, expected or already recovered: keep watching, no repair.',
+    unknown: 'Jev found the evidence too vague or contradictory to decide.'};
+  // Where a confidence decile of one choice lands under the given gates.
+  function bucketRoute(choice: string, i: number, gates: PolicyConfig['thresholds']) {
+    if (choice === 'unknown') return 'review: unknown always needs a human';
+    const gate = choice === 'investigate' ? gates.investigate : gates.observe, target = choice === 'investigate' ? 'ready' : 'observing';
+    return i / 10 >= gate ? `${target}: at or above the ${pct(gate)} gate`
+      : (i + 1) / 10 <= gate ? `review: below the ${pct(gate)} ${target} gate`
+      : `split: ${target} at ${pct(gate)} or more, review below`;
+  }
   const pct = (n: number | null | undefined) => n == null ? '—' : Math.round(n * 100) + '%';
-  const reload = () => view === 'logs' ? search() : view === 'sources' ? loadSources() : view === 'jev' ? loadJev() : view === 'settings' ? loadSettings().catch(e => error = (e as Error).message) : loadIncidents();
+  const reload = () => view === 'logs' ? search() : view === 'sources' ? loadSources() : view === 'jev' ? loadJevTab() : view === 'settings' ? loadSettings().catch(e => error = (e as Error).message) : loadIncidents();
 
   async function switchView(next: typeof view) {
     view = next; selected = null; notice = '';
@@ -476,8 +587,104 @@
         <p class="connect muted">Network, domain and HTTPS settings (<code>SITE_ADDRESS</code>, ports, <code>CLOUDFLARE_API_TOKEN</code>) configure the containers themselves: change them in <code>.env</code> and run <code>docker compose up -d</code>.</p>
       </section>
     {:else if view === 'jev'}
-      <div class="incident-toolbar"><p>Jev classifies each incident episode. Pausing stops provider calls only; collection continues and jobs wait.</p><button onclick={loadJev} disabled={loading}>Refresh</button></div>
-      {#if jevData}
+      <div class="incident-toolbar"><p>Jev classifies each incident episode. Pausing stops provider calls only; collection continues and jobs wait.</p><button onclick={() => loadJevTab()} disabled={loading}>Refresh</button></div>
+      <div class="workflow tabs" role="tablist" aria-label="Jev sections">{#each [['overview','Overview'],['policy','Policy'],['tune','Tune wizard']] as [tab, name]}<button role="tab" aria-selected={jevTab === tab} class:chosen={jevTab === tab} onclick={() => loadJevTab(tab as typeof jevTab)}><span>{name}</span></button>{/each}</div>
+      {#if jevTab === 'policy'}
+        {#if draft}
+          {@const d = draft}
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>Draft policy</h2><span>copy of version {d.base} · saving creates a new version</span></div>
+            <div class="policy-form">
+              <label>Jev model<input bind:value={d.model} maxlength="100"></label>
+              <label>Ready gate (investigate ≥)<input type="number" min="0" max="1" step="0.01" bind:value={d.thresholds.investigate}></label>
+              <label>Observe gate (observe ≥)<input type="number" min="0" max="1" step="0.01" bind:value={d.thresholds.observe}></label>
+              <label class="wide">Category question<textarea bind:value={d.instructions.category} maxlength="4000"></textarea></label>
+              <label class="wide">Actionability question<textarea bind:value={d.instructions.actionability} maxlength="4000"></textarea></label>
+            </div>
+            <h3 class="policy-heading">Categories <span class="muted">what it is, what it is not, example log lines (one per line), and the checks an agent gets</span></h3>
+            {#each d.categories as row, i}
+              <div class="policy-row">
+                <label>Name<input bind:value={row.name} pattern="[a-z][a-z0-9_]*" maxlength="40" disabled={row.name === 'unknown'}></label>
+                <label>Description<textarea bind:value={row.what}></textarea></label>
+                <label>Not for<textarea bind:value={row.not_for} placeholder="Optional: what to send elsewhere"></textarea></label>
+                <label>Examples<textarea bind:value={row.examples} placeholder="Optional: one log line per line"></textarea></label>
+                <label>Suggested checks<textarea bind:value={row.checks} placeholder="One per line"></textarea></label>
+                {#if row.name !== 'unknown'}<button class="quick-dismiss" onclick={() => d.categories.splice(i, 1)}>Remove</button>{/if}
+              </div>
+            {/each}
+            <div class="task-actions connect"><button disabled={d.categories.length >= 12} onclick={() => d.categories.splice(d.categories.length - 1, 0, {name: '', what: '', not_for: '', examples: '', checks: ''})}>Add category</button></div>
+            <h3 class="policy-heading">Actionability <span class="muted">options are fixed because routing depends on them; their meaning is yours</span></h3>
+            {#each d.actionability as row}
+              <div class="policy-row">
+                <label>Option<input value={row.name} disabled></label>
+                <label>Description<textarea bind:value={row.what}></textarea></label>
+                <label>Not for<textarea bind:value={row.not_for} placeholder="Optional"></textarea></label>
+                <label>Examples<textarea bind:value={row.examples} placeholder="Optional: one per line"></textarea></label>
+              </div>
+            {/each}
+            <div class="policy-form"><label class="wide">Change note<input bind:value={d.note} maxlength="500" placeholder="Why this version"></label></div>
+            <div class="task-actions connect"><button class="primary" onclick={() => savePolicy(true)}>Save and activate</button><button onclick={() => savePolicy(false)}>Save as inactive version</button><button onclick={() => editDraft()}>Discard changes</button></div>
+          </section>
+        {/if}
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Versions</h2><span>newest 50 · triage results record the version they used</span></div>
+          <div class="table-scroll"><table class="sources">
+            <thead><tr><th>Version</th><th>Note</th><th>Gates</th><th>Created</th><th></th></tr></thead>
+            <tbody>{#each policies?.versions ?? [] as p}<tr>
+              <td>{p.id}{#if p.id === policies?.active} <span class="source-state live">active</span>{/if}<br><span class="muted">{p.config.model} · {Object.keys(p.config.categories).length} categories</span></td>
+              <td>{p.note || '—'}</td>
+              <td>{p.config.thresholds.investigate} / {p.config.thresholds.observe}</td>
+              <td>{new Date(p.created_at).toLocaleString()}<br><span class="muted">{p.author}</span></td>
+              <td><div class="task-actions">{#if p.id !== policies?.active}<button onclick={() => activatePolicy(p.id)}>Activate</button>{/if}<button onclick={() => editDraft(p)}>Edit a copy</button></div></td>
+            </tr>{/each}</tbody>
+          </table></div>
+        </section>
+      {:else if jevTab === 'tune'}
+        {#if insightData}
+          {@const q = insightData}
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>1 · Where triage hurts</h2><span>{q.labelled} of {q.triaged} triaged incidents have your verdict</span></div>
+            <dl class="settings">
+              <div><dt>Route accuracy vs your verdicts</dt><dd>{pct(q.route_accuracy)}</dd></div>
+              <div><dt>False ready (agent sent needlessly)</dt><dd>{q.false_ready}</dd></div>
+              <div><dt>Missed ready (real problem not sent)</dt><dd>{q.missed_ready}</dd></div>
+              <div><dt>Category accuracy</dt><dd>{pct(q.category_accuracy)}</dd></div>
+            </dl>
+            {#if q.weak.length}<div class="table-scroll"><table class="sources"><thead><tr><th>Uncertain pile: service</th><th>Category</th><th>Jev leaned</th><th>Incidents</th></tr></thead>
+              <tbody>{#each q.weak as w}<tr><td>{w.service}</td><td>{w.category}</td><td>{w.action}</td><td>{w.count}</td></tr>{/each}</tbody></table></div>{/if}
+            {#if !q.labelled}<p class="connect muted">Give verdicts in step 2 first. Accuracy numbers need ground truth.</p>{/if}
+          </section>
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>2 · Give verdicts</h2><span>most informative first: dismissed, in review, or close to a gate</span></div>
+            <div class="table-scroll"><table class="sources">
+              <thead><tr><th>Incident</th><th>Jev said</th><th>Should route to</th><th>Category</th><th></th></tr></thead>
+              <tbody>{#each q.to_label as item (item.id)}
+                {@const v = verdicts[item.id]}
+                <tr>
+                  <td><button class="chip" onclick={async () => { await switchView('incidents'); openIncident(item.id); }}>{item.labels.service} · {item.labels.server_id}</button>{#if item.dismissed} <span class="source-state stale">dismissed</span>{/if}<br><span class="muted">{item.title}</span></td>
+                  <td>{item.stage}<br><span class="muted">{item.action.choice} {pct(item.action.confidence)} · {item.category.choice} {pct(item.category.confidence)}</span></td>
+                  <td><select bind:value={v.route} aria-label="Correct route"><option value="">—</option>{#each ROUTES as r}<option value={r}>{r}</option>{/each}</select></td>
+                  <td><select bind:value={v.category} aria-label="Correct category">{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select><br><label class="inline"><input type="checkbox" bind:checked={v.example}> add as example</label></td>
+                  <td><button class="primary" disabled={!v.route} onclick={() => labelCandidate(item)}>Save</button></td>
+                </tr>
+              {:else}<tr><td colspan="5" class="empty">Nothing uncertain left to label. You can also give a verdict from any incident's workspace.</td></tr>{/each}</tbody>
+            </table></div>
+          </section>
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>3 · Tune the gates</h2><span>replays stored Jev answers: free and instant, no provider calls</span></div>
+            <div class="policy-form">
+              <label>Ready gate: {gates.investigate.toFixed(2)}<input type="range" min="0.5" max="1" step="0.01" bind:value={gates.investigate} onchange={() => loadInsight(gates)}></label>
+              <label>Observe gate: {gates.observe.toFixed(2)}<input type="range" min="0.3" max="1" step="0.01" bind:value={gates.observe} onchange={() => loadInsight(gates)}></label>
+            </div>
+            <dl class="settings">
+              {#each ROUTES as r}<div><dt>Would route to {r}</dt><dd>{q.stages[r] ?? 0}</dd></div>{/each}
+              <div><dt>Near a gate (±0.1)</dt><dd>{q.near_threshold}</dd></div>
+            </dl>
+            {#if q.labelled}<div class="table-scroll"><table class="sources"><thead><tr><th>Your verdict ↓ / would route →</th>{#each ROUTES as r}<th>{r}</th>{/each}</tr></thead>
+              <tbody>{#each ROUTES as want}<tr><td>{want}</td>{#each ROUTES as got}<td class:agree={want === got}>{q.confusion[want]?.[got] ?? 0}</td>{/each}</tr>{/each}</tbody></table></div>{/if}
+            <div class="task-actions connect"><button class="primary" disabled={gates.investigate === q.active_thresholds.investigate && gates.observe === q.active_thresholds.observe} onclick={saveThresholds}>Save gates as a new policy</button><span class="muted">Active: {q.active_thresholds.investigate} / {q.active_thresholds.observe}</span></div>
+          </section>
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>4 · Sharpen the wording</h2></div>
+            <p class="connect">When verdicts show categories being confused, say what each one is <em>not</em> for and add real log lines as examples. Gates can't fix that; better criteria can. Examples you ticked in step 2 are already in the draft.</p>
+            <div class="task-actions connect"><button onclick={() => loadJevTab('policy')}>Open the policy editor</button></div>
+          </section>
+        {/if}
+      {:else if jevData}
         {@const d = jevData}
         {#if !d.configured}<p class="notice">TYPESAFE_API_KEY is not set on the server; jobs stay queued.</p>{/if}
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Control</h2><span class="source-state {d.paused ? 'stale' : 'live'}">{d.paused ? 'paused' : 'running'}</span></div>
@@ -493,6 +700,32 @@
             <div><dt>Observe gate (observe ≥)</dt><dd>{d.settings.observe_confidence}</dd></div>
           </dl>
         </section>
+        {#if insightData}
+          {@const q = insightData}
+          {@const totals = q.histogram.investigate.map((_, i) => CHOICES.reduce((sum, c) => sum + (q.histogram[c]?.[i] ?? 0), 0))}
+          {@const top = Math.max(1, ...totals)}
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>How Jev is routing</h2><span>{q.triaged} triaged incidents · policy {q.policy_id}</span></div>
+            <dl class="settings">
+              {#each ROUTES as r}<div><dt>Routed {r}</dt><dd>{q.stages[r] ?? 0}</dd></div>{/each}
+              <div><dt>Near a gate (±0.1)</dt><dd>{q.near_threshold}</dd></div>
+              <div><dt>Route accuracy vs verdicts</dt><dd>{pct(q.route_accuracy)} <span class="muted">{q.labelled} verdicts</span></dd></div>
+              {#each Object.entries(q.categories).sort((a, b) => b[1] - a[1]) as [c, n]}<div><dt>Category {c}</dt><dd>{n}</dd></div>{/each}
+            </dl>
+            <h3 class="policy-heading" title="Each row is a confidence range. Bars count incidents by what Jev chose (investigate, observe or unknown) and how confident it was. Bar length is relative to the busiest row. Hover a segment to see where those incidents are routed under the current gates.">Actionability confidence <span class="muted">by Jev's choice · hover for routing</span></h3>
+            <p class="confidence-legend">{#each CHOICES as c}<span class="legend-{c}" title={CHOICE_HELP[c]}><i aria-hidden="true"></i>{c}</span>{/each}</p>
+            <div class="confidence-bars" aria-label="Actionability confidence distribution by choice">
+              {#each totals as total, i}
+                {@const segments = CHOICES.map((c, k) => ({c, n: q.histogram[c]?.[i] ?? 0, x: CHOICES.slice(0, k).reduce((sum, p) => sum + (q.histogram[p]?.[i] ?? 0), 0)}))}
+                <div class="confidence-row"><span title={`Jev was ${i * 10}–${i * 10 + 10}% sure of the option it picked`}>{i * 10}–{i * 10 + 10}%</span>
+                  <svg viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label={segments.map(s => `${s.n} ${s.c}`).join(', ')}>
+                    <rect class="track" width="100" height="10"><title>{total} incidents in this range</title></rect>
+                    {#each segments as s}{#if s.n}<rect class="seg-{s.c}" x={s.x / top * 100} width={s.n / top * 100} height="10"><title>{s.n} judged {s.c} at {i * 10}–{i * 10 + 10}% confidence&#10;→ {bucketRoute(s.c, i, q.thresholds)}&#10;{CHOICE_HELP[s.c]}</title></rect>{/if}{/each}
+                  </svg><b>{total}</b></div>
+              {/each}
+            </div>
+            <div class="task-actions connect"><button class="primary" onclick={() => loadJevTab('tune')}>Open the tune wizard</button></div>
+          </section>
+        {/if}
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Last 24 hours</h2></div>
           <dl class="settings">
             {#each d.last_24h as row}<div><dt>Jobs {row.status}</dt><dd>{row.count}</dd></div>{/each}
@@ -527,7 +760,7 @@
       <div class="incident-toolbar"><p>Actionable incidents, from first evidence to verified resolution.</p><button onclick={loadIncidents} disabled={loading}>Refresh incidents</button></div>
       <div class="workflow" aria-label="Incident workflow">{#each ['ready','proposed','verifying','resolved'] as stage}<button class:chosen={problemStatus===stage} onclick={() => {problemStatus=problemStatus===stage?'':stage;problemOffset=0;loadIncidents();}}><span>{stage==='ready'?'Ready for agent':stage==='proposed'?'Fix proposed':stage==='verifying'?'Verifying':'Resolved'}</span><strong>{stageCount(stage)}</strong></button>{/each}</div>
       {#if status && !status.jev_configured}<p class="notice">Jev is not connected. Incidents and evidence are being collected; configure the server-side TypeSafe API key to enable triage.</p>{/if}
-      <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input bind:value={service} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each ['application','database','network','authentication','resources','configuration','dependency','unknown'] as c}<option value={c}>{c}</option>{/each}</select></label><button type="submit">Filter incidents</button></form>
+      <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input bind:value={service} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><button type="submit">Filter incidents</button></form>
       <div class="investigation" class:with-detail={selected !== null}>
         <section class="incident-list" aria-label="Incidents">
           {#each incidents as item}
@@ -552,7 +785,13 @@
               <p>{selected.occurrences.toLocaleString()} occurrences since {time(selected.first_ns)}</p>
               <div class="task-actions"><button onclick={() => copyAgentTask(selected!.id)}>Copy agent task</button><button onclick={() => copyAgentCommand(`Use the lev-agent skill to inspect Lev incident ${selected!.id}.`)}>AI agent</button><button class="primary" onclick={analyze} disabled={queuing || selected.status==='resolved'}>{queuing ? 'Queuing…' : 'Triage again'}</button></div>
               {#if DISMISSABLE.includes(selected.status)}<details class="dismiss"><summary>Dismiss as noise</summary><form onsubmit={(e) => {e.preventDefault(); dismissIncident(selected!, dismissReason);}}><label>Reason (optional)<textarea bind:value={dismissReason} maxlength="10000" placeholder="Human operator decision"></textarea></label><button type="submit">Move to observing</button></form></details>{/if}
-              {#if selected.triage}<p class="triage-info">Jev: {selected.triage.answers.actionability.choice} · {Math.round(selected.triage.answers.category.confidence*100)}% category confidence<br><small>{selected.triage.model}</small></p>{/if}
+              {#if selected.triage}<p class="triage-info">Jev: {selected.triage.answers.actionability.choice} · {Math.round(selected.triage.answers.category.confidence*100)}% category confidence<br><small>{selected.triage.model}</small></p>
+                <details class="dismiss" open={!!selected.label}><summary>{selected.label ? `Your verdict: ${selected.label.route}${selected.label.category ? ' · ' + selected.label.category : ''}` : 'Was Jev right? Give a verdict'}</summary>
+                  <form class="verdict" onsubmit={(e) => {e.preventDefault(); saveLabel(selected!.id, incidentVerdict.route, incidentVerdict.category);}}>
+                    <label>Should route to<select bind:value={incidentVerdict.route} required><option value="">—</option>{#each ROUTES as r}<option value={r}>{r}</option>{/each}</select></label>
+                    <label>Category<select bind:value={incidentVerdict.category}>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label>
+                    <button type="submit">Save verdict</button>{#if selected.label}<button type="button" onclick={() => saveLabel(selected!.id, null)}>Remove</button>{/if}
+                  </form><p class="muted">Verdicts tune Jev; they don't change this incident's stage.</p></details>{/if}
               <h3>Suspected cause</h3><p>{selected.suspected_cause || 'The worker will examine representative errors and surrounding logs.'}</p>
               <p class="muted">AI suggestions are hypotheses. Check the evidence before making changes.</p>
               <h3>Suggested checks</h3>
@@ -569,7 +808,7 @@
         {/if}
       </div>
     {/if}
-    <footer>All times shown in your local timezone. <span>Lev</span></footer>
+    <footer>All times shown in your local timezone. <span>Lev [Rc 1.1]</span></footer>
   </main>
 </div>
 {/if}

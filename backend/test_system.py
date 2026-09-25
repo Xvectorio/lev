@@ -111,7 +111,11 @@ def run():
             assert worker.analyze_one()
             assert not worker.analyze_one()
         assert len(calls) == 1
+        # Policy 1 is seeded from the built-in defaults, so upgrades triage exactly as before.
+        assert calls[0]['model'] == worker.DEFAULT_POLICY['model']
+        assert calls[0]['questions']['category']['criteria'] == worker.CATEGORIES
         with core.db() as conn:
+            assert conn.execute('SELECT triage FROM incidents').fetchone()['triage']['policy_version'] == 1
             assert conn.execute('SELECT status FROM incidents').fetchone()['status'] == 'ready'
             assert conn.execute('SELECT status FROM jobs').fetchone()['status'] == 'done'
 
@@ -162,6 +166,39 @@ def run():
             assert client.post('/api/jev', headers=admin, json={'action':'resume'}).status_code == 200
             with core.db() as conn:
                 conn.execute("UPDATE jobs SET status='done'")
+
+            # Policy versions: validated, immutable, activated from the admin; rollback = activate an older id.
+            assert client.get('/api/jev/policy', headers=admin).json()['active'] == 1
+            tuned = json.loads(json.dumps(worker.DEFAULT_POLICY))
+            tuned.update(model='jev-tuned', thresholds={'investigate': .99, 'observe': .6})
+            tuned['categories']['storage'] = {'what': 'Disk and filesystem failures', 'not_for': 'Memory pressure', 'examples': ['No space left on device']}
+            broken = {**tuned, 'categories': {'app': 'x', 'db': 'y'}}
+            assert client.post('/api/jev/policy', headers=admin, json={'config': broken}).status_code == 422
+            assert client.post('/api/jev/policy', headers=admin, json={'config': {**tuned, 'actionability': {'go': 'x', 'unknown': 'y'}}}).status_code == 422
+            assert client.post('/api/jev/policy', headers={'Cookie': admin['Cookie']}, json={'config': tuned}).status_code == 403
+            assert client.post('/api/jev/policy', headers=admin, json={'config': tuned, 'note': 'stricter'}).json() == {'id': 2, 'active': True}
+            assert client.get('/api/jev', headers=admin).json()['settings']['policy_version'] == 2
+            assert 'storage' in client.get('/api/status', headers=admin).json()['categories']
+            assert client.post('/api/jev/policy/99/activate', headers=admin).status_code == 404
+
+            # Labels are the tuning ground truth; insight re-routes stored answers under candidate gates for free.
+            label_route = '/api/incidents/' + incident_id + '/label'
+            assert client.post(label_route, headers=admin, json={'route': 'observing', 'category': 'bogus'}).status_code == 422
+            assert client.post(label_route, headers=admin, json={'route': 'observing', 'category': 'database'}).status_code == 200
+            detail = client.get('/api/incidents/' + incident_id, headers=admin).json()
+            assert detail['label']['route'] == 'observing' and detail['audit'][0]['action'] == 'labelled'
+            with core.db() as conn:
+                assert conn.execute('SELECT evidence FROM labels').fetchone()['evidence']['examples'], 'Label needs an evidence snapshot'
+                conn.execute('''UPDATE incidents SET labels=labels||'{"project_id":"routing","host":"routing"}' ''')
+            strict = client.get('/api/jev/insight', headers=admin).json()  # active gate .99 > stored .95
+            assert strict['thresholds']['investigate'] == .99 and strict['confusion'] == {'observing': {'review': 1}}, strict
+            loose = client.get('/api/jev/insight', headers=admin, params={'investigate': .9}).json()
+            assert loose['confusion'] == {'observing': {'ready': 1}} and loose['false_ready'] == 1 and loose['route_accuracy'] == 0, loose
+            assert loose['category_accuracy'] == 1 and loose['labelled'] == 1 and not loose['to_label']
+            assert client.post(label_route, headers=admin, json={'route': None}).status_code == 200
+            assert client.get('/api/jev/insight', headers=admin, params={'investigate': .9}).json()['to_label'][0]['id'] == incident_id
+            with core.db() as conn:
+                conn.execute('UPDATE incidents SET labels=labels||%s', (Jsonb({'project_id':'lev-test','host':schema}),))
             problem_list = client.get('/api/incidents?samples=true', headers=admin)
             assert problem_list.status_code == 200, problem_list.text
             assert len(problem_list.json()) == 1
@@ -234,6 +271,16 @@ def run():
             assert client.post(route+'/verify', headers=agent, json=verify).status_code == 409
             body = {'incident_id':incident_id,'request_id':'same-manual-retry'}
             assert client.post('/api/analyze', headers=admin,json=body).json() == client.post('/api/analyze',headers=admin,json=body).json()
+            # The next triage uses the active policy's model, criteria and gates (.95 < .99 -> review).
+            with patch.object(worker.httpx, 'post', side_effect=provider):
+                while worker.analyze_one():
+                    pass
+            assert calls[-1]['model'] == 'jev-tuned' and 'storage' in calls[-1]['questions']['category']['criteria']
+            with core.db() as conn:
+                item = conn.execute('SELECT status,triage FROM incidents').fetchone()
+                assert item['status'] == 'review' and item['triage']['policy_version'] == 2, item['status']
+            assert client.post('/api/jev/policy/1/activate', headers=admin).json() == {'id': 1, 'active': True}
+            assert client.get('/api/jev', headers=admin).json()['settings']['triage_confidence'] == .8
             assert client.get('/api/logs',headers=admin,params={'start':ts,'end':ts+49*3600*core.NS}).status_code == 422
             source = next(s for s in client.get('/api/sources',headers=admin).json()['sources'] if s['server_id'] == schema)
             assert source['services'] == {'checkout': 1} and source['last_heartbeat_ns'] is None, source

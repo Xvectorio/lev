@@ -1,15 +1,18 @@
 import hashlib
 import hmac
+import json
 import os
+import re
 import secrets
 import time
+from collections import Counter, defaultdict
 from contextlib import asynccontextmanager
 from typing import Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from psycopg.types.json import Jsonb
 from starlette.concurrency import run_in_threadpool
 
@@ -210,6 +213,7 @@ def incident(incident_id: str):
         item['analyses'] = conn.execute('''SELECT * FROM jobs WHERE incident_id=%s
             ORDER BY created_at DESC LIMIT 20''', (incident_id,)).fetchall()
         item['audit'] = conn.execute('SELECT * FROM audit WHERE incident_id=%s ORDER BY id DESC LIMIT 30', (incident_id,)).fetchall()
+        item['label'] = conn.execute('SELECT route,category,actor,at FROM labels WHERE incident_id=%s', (incident_id,)).fetchone()
         return item
 
 
@@ -239,7 +243,8 @@ def status(samples: bool = False):
                 'jobs': conn.execute(f'SELECT j.status,count(*) FROM jobs j JOIN incidents i ON i.id=j.incident_id WHERE {visible} GROUP BY j.status', (samples,)).fetchall(),
                 'incidents': conn.execute(f'SELECT count(*) AS count FROM incidents i WHERE {visible}', (samples,)).fetchone()['count'],
                 'problems': conn.execute(f'SELECT i.status,count(*) FROM incidents i WHERE {visible} GROUP BY i.status', (samples,)).fetchall(),
-                'jev_configured': bool(setting('TYPESAFE_API_KEY', conn)), 'explanations_configured': bool(setting('AI_MODEL', conn))}
+                'jev_configured': bool(setting('TYPESAFE_API_KEY', conn)), 'explanations_configured': bool(setting('AI_MODEL', conn)),
+                'categories': list(worker.active_policy(conn)['config']['categories'])}
 
 
 JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at,j.completed_at,j.next_attempt,
@@ -251,9 +256,11 @@ JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at
 def jev():
     with db() as conn:
         paused = conn.execute("SELECT value FROM settings WHERE name='jev_paused'").fetchone()
+        policy = worker.active_policy(conn)
         return {'paused': bool(paused and paused['value']), 'configured': bool(setting('TYPESAFE_API_KEY', conn)),
-                'settings': {'model': os.getenv('TYPESAFE_MODEL', 'jev-latest'), 'policy_version': worker.POLICY_VERSION,
-                             'triage_confidence': worker.CONFIDENCE, 'observe_confidence': worker.OBSERVE_CONFIDENCE},
+                'settings': {'model': policy['config']['model'], 'policy_version': policy['id'],
+                             'triage_confidence': policy['config']['thresholds']['investigate'],
+                             'observe_confidence': policy['config']['thresholds']['observe']},
                 'last_24h': conn.execute("""SELECT status,count(*) FROM jobs
                     WHERE coalesce(completed_at,created_at)>now()-interval '24 hours' GROUP BY status""").fetchall(),
                 'routes_24h': conn.execute("""SELECT result->'triage'->'answers'->'actionability'->>'choice' AS choice,count(*),
@@ -302,6 +309,161 @@ def jev_control(body: JevControl):
         return {'changed': changed.rowcount}
 
 
+Criterion = str | dict[str, str | list[str]]  # TypeSafe criteria: text, or {what, not_for, examples, ...}
+
+
+class Thresholds(BaseModel):
+    investigate: float = Field(ge=0, le=1)
+    observe: float = Field(ge=0, le=1)
+
+
+class Instructions(BaseModel):
+    category: str = Field(min_length=10, max_length=4000)
+    actionability: str = Field(min_length=10, max_length=4000)
+
+
+class PolicyConfig(BaseModel):
+    model: str = Field(min_length=1, max_length=100)
+    thresholds: Thresholds
+    instructions: Instructions
+    categories: dict[str, Criterion]
+    actionability: dict[str, Criterion]
+    checks: dict[str, list[str]]
+
+    @model_validator(mode='after')
+    def check(self):
+        if not 2 <= len(self.categories) <= 12 or 'unknown' not in self.categories:
+            raise ValueError('Categories: 2 to 12 options, including unknown')
+        if any(not re.fullmatch(r'[a-z][a-z0-9_]{0,39}', key) for key in self.categories):
+            raise ValueError('Category names: lowercase letters, digits and _')
+        if set(self.actionability) != {'investigate', 'observe', 'unknown'}:
+            raise ValueError('Actionability options are fixed: investigate, observe, unknown')  # routing depends on them
+        if len(json.dumps(self.model_dump())) > 60000:
+            raise ValueError('Policy too large')
+        return self
+
+
+class NewPolicy(BaseModel):
+    config: PolicyConfig
+    note: str = Field('', max_length=500)
+    activate: bool = True
+
+
+def activate_policy(conn, policy_id):
+    conn.execute('''INSERT INTO settings(name,value) VALUES ('active_policy',%s)
+        ON CONFLICT(name) DO UPDATE SET value=excluded.value''', (Jsonb(policy_id),))
+
+
+@app.get('/api/jev/policy')
+def policies():
+    with db() as conn:
+        return {'active': worker.active_policy(conn)['id'],
+                'versions': conn.execute('SELECT * FROM policies ORDER BY id DESC LIMIT 50').fetchall()}
+
+
+@app.post('/api/jev/policy')
+def create_policy(body: NewPolicy, request: Request):
+    # Versions are immutable: triage results record the id they were judged with.
+    with db() as conn:
+        row = conn.execute('INSERT INTO policies(author,note,config) VALUES (%s,%s,%s) RETURNING id',
+                           (request.state.user, body.note, Jsonb(body.config.model_dump()))).fetchone()
+        if body.activate:
+            activate_policy(conn, row['id'])
+    return {'id': row['id'], 'active': body.activate}
+
+
+@app.post('/api/jev/policy/{policy_id}/activate')
+def activate(policy_id: int):
+    with db() as conn:
+        if not conn.execute('SELECT 1 FROM policies WHERE id=%s', (policy_id,)).fetchone():
+            raise HTTPException(404, 'Policy not found')
+        activate_policy(conn, policy_id)
+    return {'id': policy_id, 'active': True}
+
+
+class Label(BaseModel):
+    route: Literal['ready', 'observing', 'review'] | None  # None removes the label
+    category: str | None = Field(None, max_length=40)
+
+
+@app.post('/api/incidents/{incident_id}/label')
+def label(incident_id: str, body: Label, request: Request):
+    # The operator's verdict on where Jev should have routed this incident; the tuning ground truth.
+    with db() as conn:
+        item = get_problem(conn, incident_id)
+        if body.route is None:
+            conn.execute('DELETE FROM labels WHERE incident_id=%s', (incident_id,))
+        else:
+            if body.category and body.category not in worker.active_policy(conn)['config']['categories']:
+                raise HTTPException(422, 'Unknown category')
+            # Snapshot the triage input: raw events expire after 72 hours, labels must not.
+            snapshot = {'examples': evidence(conn, incident_id), 'labels': item['labels'], 'occurrences': item['occurrences'],
+                        'first_ns': item['first_ns'], 'last_ns': item['last_ns']}
+            conn.execute('''INSERT INTO labels(incident_id,route,category,actor,evidence) VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT(incident_id) DO UPDATE SET route=excluded.route,category=excluded.category,
+                actor=excluded.actor,at=now(),evidence=excluded.evidence''',
+                         (incident_id, body.route, body.category, request.state.user, Jsonb(snapshot)))
+        conn.execute("INSERT INTO audit(incident_id,actor,action,data) VALUES (%s,%s,'labelled',%s)",
+                     (incident_id, request.state.user, Jsonb(body.model_dump())))
+    return body.model_dump()
+
+
+def near(answer, thresholds):
+    gate = {'investigate': thresholds['investigate'], 'observe': thresholds['observe']}.get(answer['choice'])
+    return gate is not None and abs(answer['confidence'] - gate) < 0.1
+
+
+@app.get('/api/jev/insight')
+def insight(investigate: float | None = Query(None, ge=0, le=1), observe: float | None = Query(None, ge=0, le=1)):
+    # Re-routes stored Jev answers under candidate thresholds: tuning gates costs no provider calls.
+    with db() as conn:
+        policy = worker.active_policy(conn)
+        rows = conn.execute(f"""SELECT i.id,i.labels,i.status,i.triage,left(coalesce(i.summary,i.pattern),200) AS title,
+            l.route AS label_route,l.category AS label_category,
+            EXISTS(SELECT 1 FROM audit a WHERE a.incident_id=i.id AND a.action='dismissed') AS dismissed
+            FROM incidents i LEFT JOIN labels l ON l.incident_id=i.id
+            WHERE i.superseded_by IS NULL AND NOT {SAMPLE_SQL} AND i.triage IS NOT NULL
+            ORDER BY i.last_ns DESC LIMIT 5000""").fetchall()  # ponytail: newest 5000; aggregate in SQL beyond that
+    active = policy['config']['thresholds']
+    thresholds = {'investigate': active['investigate'] if investigate is None else investigate,
+                  'observe': active['observe'] if observe is None else observe}
+    stages, confusion, weak, candidates = Counter(), defaultdict(Counter), Counter(), []
+    histogram = {choice: [0] * 10 for choice in ('investigate', 'observe', 'unknown')}  # confidence deciles per choice
+    categories = Counter()
+    labelled = category_labelled = category_correct = near_count = 0
+    for r in rows:
+        answers = r['triage']['answers']
+        action, category = answers['actionability'], answers['category']
+        stage = worker.route_triage(r['triage'], thresholds)
+        stages[stage] += 1
+        categories[category['choice']] += 1
+        histogram.setdefault(action['choice'], [0] * 10)[min(9, int(action['confidence'] * 10))] += 1
+        close = near(action, thresholds)
+        near_count += close
+        if stage == 'review' or category['choice'] == 'unknown':
+            weak[(r['labels'].get('service', ''), category['choice'], action['choice'])] += 1
+        if r['label_route']:
+            labelled += 1
+            confusion[r['label_route']][stage] += 1
+            if r['label_category']:
+                category_labelled += 1
+                category_correct += r['label_category'] == category['choice']
+        elif r['dismissed'] or stage == 'review' or close:
+            candidates.append({'id': r['id'], 'title': r['title'], 'labels': r['labels'], 'status': r['status'], 'stage': stage,
+                               'action': action, 'category': category, 'dismissed': r['dismissed'],
+                               'priority': 2 * r['dismissed'] + (stage == 'review') + close})
+    agree = sum(confusion[s][s] for s in confusion)
+    return {'policy_id': policy['id'], 'active_thresholds': active, 'thresholds': thresholds,
+            'triaged': len(rows), 'stages': stages, 'categories': categories, 'histogram': histogram, 'near_threshold': near_count,
+            'labelled': labelled, 'confusion': confusion,
+            'route_accuracy': agree / labelled if labelled else None,
+            'false_ready': sum(confusion.get(s, {}).get('ready', 0) for s in ('observing', 'review')),
+            'missed_ready': sum(n for s, n in confusion.get('ready', {}).items() if s != 'ready'),
+            'category_accuracy': category_correct / category_labelled if category_labelled else None,
+            'weak': [{'service': k[0], 'category': k[1], 'action': k[2], 'count': n} for k, n in weak.most_common(10)],
+            'to_label': sorted(candidates, key=lambda c: -c['priority'])[:20]}
+
+
 @app.get('/api/labels')
 def labels():
     now = time.time_ns()
@@ -335,10 +497,11 @@ def sources():
             item['last_heartbeat_ns'] = row['ts_ns']
     with db() as conn:
         workers = conn.execute('SELECT *,checkpoint_ns::text AS checkpoint_ns FROM worker_state').fetchall()
+        confidence = worker.active_policy(conn)['config']['thresholds']['investigate']
     return {'sources': sorted(found.values(), key=lambda s: (s['project_id'], s['server_id'])), 'workers': workers,
             'settings': {'collect_interval_s': worker.COLLECT_INTERVAL, 'settle_s': worker.SETTLE // NS,
                          'lookback_s': worker.LOOKBACK // NS, 'catch_up_s': 600, 'retention_h': 48,
-                         'heartbeat_interval_s': 60, 'observation_s': 900, 'triage_confidence': worker.CONFIDENCE}}
+                         'heartbeat_interval_s': 60, 'observation_s': 900, 'triage_confidence': confidence}}
 
 
 def task_data(conn, incident_id):
@@ -375,7 +538,6 @@ def agent_task(incident_id: str):
 
 @app.get('/api/incidents/{incident_id}/task', response_class=PlainTextResponse)
 def task_file(incident_id: str):
-    import json
     with db() as conn:
         task = task_data(conn, incident_id)
     return PlainTextResponse(json.dumps(task, indent=2, default=str), media_type='application/json',

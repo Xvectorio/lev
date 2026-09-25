@@ -73,3 +73,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   username text NOT NULL REFERENCES users ON DELETE CASCADE ON UPDATE CASCADE,
   expires_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS policies (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  author text NOT NULL,
+  note text NOT NULL DEFAULT '',
+  config jsonb NOT NULL
+);
+CREATE TABLE IF NOT EXISTS labels (
+  incident_id text PRIMARY KEY REFERENCES incidents(id),
+  route text NOT NULL,
+  category text,
+  actor text NOT NULL,
+  at timestamptz NOT NULL DEFAULT now(),
+  evidence jsonb NOT NULL
+);
