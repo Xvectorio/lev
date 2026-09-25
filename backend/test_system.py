@@ -14,6 +14,7 @@ from psycopg.types.json import Jsonb
 
 import app as lev
 import core
+import testdata
 import worker
 from app import app
 
@@ -351,7 +352,23 @@ def run():
             assert source['services'] == {'checkout': 1} and source['last_heartbeat_ns'] is None, source
             assert client.get('/api/sources').status_code == 401
             assert schema in client.get('/api/labels',headers=admin).json()['server_id']
-        print('PASS: first-run setup, sessions, Loki ingestion, deduplication, provider outage, checkpoints, Jev contract, crash recovery, auth, proposal approval, verification, recurrence, retained evidence and manual idempotency.')
+            # Test data lands in Loki and becomes incidents; the wipe needs the typed phrase and empties everything.
+            loaded = client.post('/api/testdata', headers=admin).json()
+            assert loaded['logs'] > 400 and loaded['incidents'] >= 15 and not loaded['loki_warning'], loaded
+            assert client.get('/api/logs', headers=admin, params={'host': 'db-01', 'start': time.time_ns()-7*3600*core.NS, 'end': time.time_ns()}).json(), 'Test logs are searchable'
+            assert client.post('/api/wipe', headers=admin, json={'confirm': 'yes'}).status_code == 422
+            wipe = {'confirm': 'DELETE ALL DATA'}
+            assert client.post('/api/wipe', headers=admin, json=wipe).status_code == 502, 'Stock test Loki has no delete API'
+            with core.db() as conn:
+                assert conn.execute('SELECT count(*) AS n FROM incidents').fetchone()['n'], 'A refused Loki delete keeps PostgreSQL'
+            deleted = httpx.Response(204, request=httpx.Request('POST', core.LOKI))
+            with patch.object(testdata.httpx, 'post', return_value=deleted) as loki_delete:
+                assert client.post('/api/wipe', headers=admin, json=wipe).status_code == 200
+            assert loki_delete.call_args.kwargs['params']['query'] == '{service=~".+"}'
+            with core.db() as conn:
+                assert conn.execute('SELECT (SELECT count(*) FROM incidents)+(SELECT count(*) FROM jobs)+(SELECT count(*) FROM audit) AS n').fetchone()['n'] == 0
+                assert conn.execute('SELECT count(*) AS n FROM users').fetchone()['n'] == 1, 'Users survive the wipe'
+        print('PASS: first-run setup, sessions, Loki ingestion, deduplication, provider outage, checkpoints, Jev contract, crash recovery, auth, proposal approval, verification, recurrence, retained evidence, manual idempotency, test data and wipe.')
     finally:
         os.environ.pop('PGOPTIONS', None)
         with core.db() as conn:

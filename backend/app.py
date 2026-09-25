@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 from psycopg.types.json import Jsonb
 from starlette.concurrency import run_in_threadpool
 
+import testdata
 import worker
 from core import LOKI, NS, SAMPLE_SQL, SETTINGS, db, digest, evidence, initialize, logs, secret, selector, setting
 
@@ -295,6 +296,32 @@ def save_settings(body: dict[str, str], request: Request):
                      (Jsonb({k: v.strip() for k, v in body.items() if v.strip()}), [k for k, v in body.items() if not v.strip()]))
     print(f'Settings changed by {request.state.user}: {", ".join(sorted(body))}', flush=True)
     return get_settings()
+
+
+@app.post('/api/testdata')
+def load_testdata(request: Request):
+    rows, beats = testdata.generate()
+    note = testdata.push(rows + beats)
+    with db() as conn:
+        worker.ingest(conn, rows)
+        count = conn.execute('SELECT count(*) AS n FROM incidents WHERE superseded_by IS NULL').fetchone()['n']
+    print(f'Test data loaded by {request.state.user}: {len(rows)} logs', flush=True)
+    return {'logs': len(rows), 'incidents': count, 'loki_warning': note}
+
+
+class Wipe(BaseModel):
+    confirm: Literal['DELETE ALL DATA']  # typed by the operator in the UI
+
+
+@app.post('/api/wipe')
+def wipe(body: Wipe, request: Request):
+    with db() as conn:
+        try:
+            testdata.wipe(conn)
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f'Loki refused the delete, nothing was removed: {e}')
+    print(f'ALL DATA WIPED by {request.state.user}', flush=True)
+    return {'wiped': True}
 
 
 class JevControl(BaseModel):

@@ -81,6 +81,8 @@ The ingest password and agent token are on the **Sources** page (**Copy ingest p
 
 Upgrading from a pre-release install that used `ops/setup.sh`: keep your `.env`. The `init` service copies `POSTGRES_PASSWORD`, `VECTOR_PASSWORD` and `AGENT_TOKEN` from it, so the database, source servers and agents keep working. The old `ADMIN_*` values are no longer used; create the admin with the setup code.
 
+**Settings → Data** has two actions. **Load test data** writes the last hour of realistic logs from six made-up servers (a database connection storm cascading into API and nginx errors, a filling invoice disk, payment retries, an OOM kill, firewall noise, an expiring staging certificate) into Loki and ingests them like the collector, so they become normal incidents; with a TypeSafe key set, Jev triages them and spends credits. Loading again adds a fresh hour on top. **Delete all data** (type `DELETE ALL DATA` to confirm) removes every incident, event, job, verdict, replay and audit entry, and asks Loki to delete every stored log (they drop out of searches right away; disk space frees after Loki's delete delay). Users, settings and policy versions stay. Only a backup brings the data back.
+
 The **Theme** control offers System, Light and Dark modes. Your choice is saved in your browser; System follows your device’s color preference.
 
 ## Stack and workflow

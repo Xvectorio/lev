@@ -86,6 +86,9 @@
       '- TypeSafe API key: required for Jev triage. Without it jobs stay queued.',
       '- AI key / model: any OpenAI-compatible endpoint for incident explanations and policy suggestions. Optional.',
       'Provider base URLs (AI_BASE_URL, e.g. https://openrouter.ai/api/v1, and TYPESAFE_BASE_URL) are .env-only, so the keys can only go where the server owner points them. Domain, ports and HTTPS are container settings: change them in .env and run docker compose up -d.',
+      '# Data',
+      '- Load test data: an hour of realistic logs from six made-up servers, ingested like real ones. Jev triages them (spends credits if a key is set).',
+      '- Delete all data: removes every incident, verdict, audit entry and every log in Loki, real ones too. Users, settings and policies stay. Type DELETE ALL DATA to confirm; only a backup undoes it.',
     ]},
   };
 </script>

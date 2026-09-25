@@ -35,6 +35,18 @@
     try { await api('/settings', {method: 'POST', headers: POST, body: JSON.stringify(body)}); await loadSettings(); await refreshStatus(); notice = clear ? `${SETTING_LABELS[clear]} override removed.` : 'Settings saved.'; }
     catch (e) { error = (e as Error).message; }
   }
+  // Demo data and the full wipe (Settings / Data).
+  const WIPE_PHRASE = 'DELETE ALL DATA';
+  let wipeText = $state(''), dataBusy = $state(false);
+  async function dataAction(path: '/testdata' | '/wipe') {
+    error = ''; notice = ''; dataBusy = true;
+    try {
+      const r = await api(path, {method: 'POST', headers: POST, body: JSON.stringify(path === '/wipe' ? {confirm: wipeText} : {})});
+      notice = path === '/wipe' ? 'All incidents, triage history and logs were deleted.' : `Loaded ${r.logs} test log lines; ${r.incidents} incidents now open.${r.loki_warning ? ' Loki skipped some lines: ' + r.loki_warning : ''}`;
+      wipeText = ''; await refreshStatus();
+    } catch (e) { error = (e as Error).message; }
+    dataBusy = false;
+  }
   let jevData = $state<Jev | null>(null);
   let sources = $state<Sources | null>(null);
   let text = $state(''), service = $state(''), severity = $state('');
@@ -654,6 +666,15 @@
           <div class="wide"><button class="primary" type="submit">Save</button></div>
         </form>
         <p class="connect muted">Network, domain and HTTPS settings (<code>SITE_ADDRESS</code>, ports, <code>CLOUDFLARE_API_TOKEN</code>) configure the containers themselves: change them in <code>.env</code> and run <code>docker compose up -d</code>.</p>
+      </section>
+      <section class="log-panel admin-panel"><div class="panel-heading"><h2>Data</h2><span>test data and reset</span></div>
+        <p class="connect">Load an hour of realistic logs from six made-up servers (web-01, app-01, db-01, worker-01, edge-01, stg-app-01): a database connection storm, a filling disk, payment retries, firewall noise. They go through the normal pipeline, so Jev triages them and spends TypeSafe credits if a key is set.</p>
+        <div class="task-actions connect"><button onclick={() => dataAction('/testdata')} disabled={dataBusy}>{dataBusy ? 'Working…' : 'Load test data'}</button></div>
+        <div class="alert connect danger-zone">
+          <div><strong>⚠ Danger: delete all data.</strong> Permanently removes every incident, triage result, verdict, proposal, audit entry and every log in Loki, real ones included. Logs that arrive afterwards start fresh. Users, settings and policy versions are kept. There is no undo; only a backup restores it.</div>
+          <label>Type <code>{WIPE_PHRASE}</code> to confirm<input autocomplete="off" spellcheck="false" bind:value={wipeText}></label>
+          <button class="danger" onclick={() => dataAction('/wipe')} disabled={dataBusy || wipeText !== WIPE_PHRASE}>Delete all data</button>
+        </div>
       </section>
     {:else if view === 'jev'}
       <div class="incident-toolbar"><p>Jev classifies each incident episode. Pausing stops provider calls only; collection continues and jobs wait.</p><button onclick={() => loadJevTab()} disabled={loading}>Refresh</button></div>
