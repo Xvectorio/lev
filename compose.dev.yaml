@@ -16,7 +16,7 @@ services:
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
   test:
-    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-api:${LEV_VERSION:-latest}
     profiles: [tools]
     command: [python, test_system.py]
     environment:
@@ -32,7 +32,7 @@ services:
       test-loki:
         condition: service_started
   eval-triage:
-    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-api:${LEV_VERSION:-latest}
     user: "0:0"
     profiles: [tools]
     entrypoint: [python, evaluate_triage.py]

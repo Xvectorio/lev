@@ -1,7 +1,7 @@
 name: lev-source
 services:
   vector:
-    image: ghcr.io/jelcke/lev-vector:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-vector:${LEV_VERSION:-latest}
     restart: unless-stopped
     hostname: ${VECTOR_HOST:?Set a stable host name}
     group_add:

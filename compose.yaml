@@ -19,7 +19,7 @@ x-backend-env: &backend-env
   BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
 services:
   init:
-    image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-edge:${LEV_VERSION:-latest}
     entrypoint: [lev-init]
     environment:
       # Only for upgrades from a setup-generated .env; new installs generate their own.
@@ -29,7 +29,7 @@ services:
     volumes:
       - secrets:/run/lev
   edge:
-    image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-edge:${LEV_VERSION:-latest}
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-8080}:80"
@@ -45,7 +45,7 @@ services:
       api:
         condition: service_healthy
   api:
-    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-api:${LEV_VERSION:-latest}
     restart: unless-stopped
     environment: *backend-env
     volumes:
@@ -59,7 +59,7 @@ services:
       timeout: 3s
       retries: 10
   worker:
-    image: ghcr.io/jelcke/lev-api:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-api:${LEV_VERSION:-latest}
     restart: unless-stopped
     command: [python, worker.py]
     environment: *backend-env
@@ -123,7 +123,7 @@ services:
       postgres:
         condition: service_healthy
   vector:
-    image: ghcr.io/jelcke/lev-vector:${LEV_VERSION:-latest}
+    image: ghcr.io/xvectorio/lev-vector:${LEV_VERSION:-latest}
     restart: unless-stopped
     hostname: ${LOCAL_SERVER_ID:-local}
     group_add: ["${LOCAL_JOURNAL_GID:-65534}"]

@@ -115,7 +115,7 @@ docker compose restart vector
 
 ## Add a source server (Docker only)
 
-On the source server, download `vector-compose.yaml` and `vector.env.example` from the [latest release](https://github.com/jelcke/lev/releases/latest) into a directory such as `/opt/lev-vector`, rename them to `compose.yaml` and `.env` (`chmod 600 .env`), create an empty `watch.d/` directory, and set:
+On the source server, download `vector-compose.yaml` and `vector.env.example` from the [latest release](https://github.com/Xvectorio/lev/releases/latest) into a directory such as `/opt/lev-vector`, rename them to `compose.yaml` and `.env` (`chmod 600 .env`), create an empty `watch.d/` directory, and set:
 
 - `VECTOR_PROJECT_ID`: stable, human-readable project ID (for example `payments-prod`).
 - `VECTOR_SERVER_ID`: stable server ID (for example `eu-west-1-app-03`). This is separate from `VECTOR_HOST`, which is the machine hostname shown for context.
@@ -125,7 +125,7 @@ On the source server, download `vector-compose.yaml` and `vector.env.example` fr
 - `VECTOR_ENDPOINT`: central HTTPS URL, without `/loki/api/v1/push`.
 - `VECTOR_PASSWORD`: from Lev → **Sources** → **Copy ingest password**.
 
-The shared pipeline (`vector/vector.yaml` in this repo) ships inside the `ghcr.io/jelcke/lev-vector` image.
+The shared pipeline (`vector/vector.yaml` in this repo) ships inside the `ghcr.io/xvectorio/lev-vector` image.
 
 Per-server log sources go in `vector/watch.d/<thing>.yaml` (a `src_<thing>` source plus a `watch_<thing>` remap that sets `.lev_service`, optionally `.lev_level`); the shared `vector.yaml` picks up every `watch_*` transform and stays identical on all servers. Each watch file carries its own `tests:`; `vector-test` runs them with the shared tests. Claude Code can install Vector and add these with the `.claude/skills/lev-vector` skill ("watch nginx"): it finds a service's journald, container and file logs, adds only what is not already collected, and tests parsing with real sample lines. To use it on a source server, copy the skill folder to `~/.claude/skills/`.
 

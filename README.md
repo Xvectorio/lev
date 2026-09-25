@@ -27,8 +27,8 @@ Needs Docker Engine with Compose v2.23 or newer. No git checkout required.
 
 ```sh
 mkdir lev && cd lev
-curl -fsSLO https://github.com/jelcke/lev/releases/latest/download/compose.yaml
-curl -fsSL -o .env https://github.com/jelcke/lev/releases/latest/download/env.example && chmod 600 .env
+curl -fsSLO https://github.com/Xvectorio/lev/releases/latest/download/compose.yaml
+curl -fsSL -o .env https://github.com/Xvectorio/lev/releases/latest/download/env.example && chmod 600 .env
 docker compose up -d
 docker compose logs api | grep 'setup code'
 ```

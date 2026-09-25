@@ -45,7 +45,7 @@ docker compose run --rm --no-deps -e VECTOR_HOST=test-host -e VECTOR_SERVER_ID=t
 Skip if a Lev Vector container is already running (`docker ps --format '{{.Image}}' | grep -E 'lev-vector|timberio/vector'`).
 
 1. Check prerequisites: `docker compose version`. Persistent journal: `/var/log/journal` exists. If not, tell the user journald is volatile and only files/containers will be collected.
-2. Copy `compose.yaml`, `.env.example` and an empty `watch.d/` from the Lev repo's `vector/` dir onto the server (e.g. `/opt/lev-vector`). Take them from the repo, not from memory. The shared `vector.yaml` ships inside the `ghcr.io/jelcke/lev-vector` image.
+2. Copy `compose.yaml`, `.env.example` and an empty `watch.d/` from the Lev repo's `vector/` dir onto the server (e.g. `/opt/lev-vector`). Take them from the repo, not from memory. The shared `vector.yaml` ships inside the `ghcr.io/xvectorio/lev-vector` image.
 3. Create `.env` from `.env.example` with `chmod 600`:
    - `VECTOR_HOST`: `hostname -s`.
    - `VECTOR_SERVER_ID` and `VECTOR_PROJECT_ID`: ask the user. These must be stable, low-cardinality IDs.
