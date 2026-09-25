@@ -59,7 +59,7 @@ docker compose logs api | grep 'setup code'
 
 Open http://<server>:8080 (http://localhost:8080 on the same machine) and enter the setup code, then choose your admin username and password. On first start Lev generates its internal secrets (database password, ingest password, agent token) into a Docker volume. Every data volume starts empty.
 
-`.env` holds every optional setting, commented out with its default; empty values also mean the default. To turn on triage, enter the TypeSafe API key under **Settings** in the UI (takes effect immediately), or set `TYPESAFE_API_KEY=...` in `.env` and run `docker compose up -d` again. Values saved in Settings override `.env`.
+`.env` holds every optional setting, commented out with its default; empty values also mean the default. To turn on triage, enter the TypeSafe API key under **Settings** in the UI (takes effect immediately), or set `TYPESAFE_API_KEY=...` in `.env` and run `docker compose up -d` again. Values saved in Settings override `.env`. Provider base URLs (`AI_BASE_URL`, `TYPESAFE_BASE_URL`) are `.env`-only, so an operator session cannot redirect the keys to another server.
 
 ---
 
@@ -249,7 +249,7 @@ Source servers then use `VECTOR_ENDPOINT=https://<name>`. PostgreSQL, Loki and F
 
 ## Backups and restore
 
-The backup container creates a PostgreSQL custom-format dump daily in `backups/`, retaining 14 days. It includes incident evidence, proposals, audit, checkpoint and jobs. Copy these dumps **off-server** using your existing encrypted backup destination; local copies alone do not protect against host loss. Save the `secrets` volume (`docker run --rm -v lev_secrets:/s alpine tar c -C /s .`) and any `.env` securely with your recovery material; a restored database needs its original `postgres_password`. Raw Loki logs deliberately have no long-term archive.
+The backup container creates a PostgreSQL custom-format dump daily in `backups/`, retaining 14 days. It includes incident evidence, proposals, audit, checkpoint and jobs. Copy these dumps **off-server** using your existing encrypted backup destination; local copies alone do not protect against host loss. Save the `secrets` volume (`docker run --rm -v lev_secrets:/s alpine tar c -C /s .`) and any `.env` securely with your recovery material; a restored database needs its original `postgres_password`. Raw Loki logs deliberately have no long-term archive. Dumps hold the API keys saved under **Settings** in clear, so protect `backups/` and its off-server copies like `.env`.
 
 Restore into a fresh database first. The executable restore check creates a disposable database, restores a fresh dump and checks the tables without changing the live database:
 

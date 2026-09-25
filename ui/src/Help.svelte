@@ -84,8 +84,8 @@
     settings: { title: 'AI providers', body: [
       'Values saved here override .env; clear one to fall back to it. Keys are stored in the database and never shown again.',
       '- TypeSafe API key: required for Jev triage. Without it jobs stay queued.',
-      '- AI base URL / key / model: any OpenAI-compatible endpoint (e.g. https://openrouter.ai/api/v1) for incident explanations and policy suggestions. Optional.',
-      'Domain, ports and HTTPS are container settings: change them in .env and run docker compose up -d.',
+      '- AI key / model: any OpenAI-compatible endpoint for incident explanations and policy suggestions. Optional.',
+      'Provider base URLs (AI_BASE_URL, e.g. https://openrouter.ai/api/v1, and TYPESAFE_BASE_URL) are .env-only, so the keys can only go where the server owner points them. Domain, ports and HTTPS are container settings: change them in .env and run docker compose up -d.',
     ]},
   };
 </script>

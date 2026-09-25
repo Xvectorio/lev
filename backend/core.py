@@ -23,7 +23,8 @@ def secret(name):
 
 
 # Runtime settings editable on the Settings page; a saved value overrides the .env one.
-SETTINGS = {'TYPESAFE_API_KEY': True, 'TYPESAFE_BASE_URL': False, 'AI_BASE_URL': False, 'AI_API_KEY': True, 'AI_MODEL': False}  # name: secret
+# name: secret. Provider URLs are env-only: a URL editable here would let any operator send the keys to their own server.
+SETTINGS = {'TYPESAFE_API_KEY': True, 'AI_API_KEY': True, 'AI_MODEL': False}
 
 
 def setting(name, conn=None):

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -130,14 +131,19 @@ def setup(body: Setup, request: Request, response: Response):
     return start_session(request, response, body.username)
 
 
-@app.post('/api/auth/login')
-def login(body: Login, request: Request, response: Response):
+def valid_login(username, password):
     with db() as conn:
-        row = conn.execute('SELECT password_hash FROM users WHERE username=%s', (body.username,)).fetchone()
-    if not check_password(body.password, row['password_hash'] if row else UNKNOWN_USER_HASH) or not row:
-        time.sleep(1)  # ponytail: per-attempt delay, not a lockout; add per-IP limits if exposed to the internet.
+        row = conn.execute('SELECT password_hash FROM users WHERE username=%s', (username,)).fetchone()
+    return check_password(password, row['password_hash'] if row else UNKNOWN_USER_HASH) and bool(row)
+
+
+@app.post('/api/auth/login')
+async def login(body: Login, request: Request, response: Response):
+    # Async so the failure delay doesn't hold a worker thread: bad logins can't starve the shared pool.
+    if not await run_in_threadpool(valid_login, body.username, body.password):
+        await asyncio.sleep(1)  # ponytail: per-attempt delay, not a lockout; add per-IP limits if exposed to the internet.
         raise HTTPException(401, 'Wrong username or password')
-    return start_session(request, response, body.username)
+    return await run_in_threadpool(start_session, request, response, body.username)
 
 
 @app.post('/api/auth/logout')

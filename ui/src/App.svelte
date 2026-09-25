@@ -22,7 +22,7 @@
   });
   let view = $state<'logs' | 'incidents' | 'sources' | 'jev' | 'settings'>('incidents');
   // Runtime settings: secrets come back only as {set}; a blank secret field keeps the stored key.
-  const SETTING_LABELS: Record<string, string> = {TYPESAFE_API_KEY: 'TypeSafe API key (Jev triage)', TYPESAFE_BASE_URL: 'TypeSafe base URL', AI_BASE_URL: 'Explanations base URL (OpenAI-compatible)', AI_API_KEY: 'Explanations API key', AI_MODEL: 'Explanations model (empty = off)'};
+  const SETTING_LABELS: Record<string, string> = {TYPESAFE_API_KEY: 'TypeSafe API key (Jev triage)', AI_API_KEY: 'Explanations API key', AI_MODEL: 'Explanations model (empty = off)'};
   let appSettings = $state<Record<string, {secret?: boolean; set?: boolean; value?: string}>>({});
   let settingsForm = $state<Record<string, string>>({});
   async function loadSettings() {
@@ -185,7 +185,8 @@
 
   // Browsers can't start a local CLI; copy a command to paste into a terminal in the Lev repo.
   async function copyAgentCommand(prompt: string) {
-    const command = `claude '${prompt.replaceAll("'", `'\\''`)}'`;
+    // Log text may carry terminal escape sequences (ESC, OSC, C1) that act on paste: keep only tab and newline.
+    const command = `claude '${prompt.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').replaceAll("'", `'\\''`)}'`;
     try { await copyText(command); notice = 'Claude Code command copied. Paste it in a terminal at the Lev repo root.'; }
     catch { error = 'Clipboard unavailable. Run: ' + command; }
   }

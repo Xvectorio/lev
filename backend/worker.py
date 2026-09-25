@@ -148,7 +148,7 @@ def classify(item, evidence, job_id, policy):
         raise RuntimeError('Set the TypeSafe API key in Settings to enable Jev triage')
     config = policy['config']
     payload = triage_payload(item, evidence, config)
-    response = httpx.post((setting('TYPESAFE_BASE_URL') or 'https://api.typesafe.ai').rstrip('/') + '/v1/systemone',
+    response = httpx.post((os.getenv('TYPESAFE_BASE_URL') or 'https://api.typesafe.ai').rstrip('/') + '/v1/systemone',
         headers={'Authorization': 'Bearer ' + key, 'Idempotency-Key': job_id}, json=payload, timeout=30)
     response.raise_for_status()
     result = response.json()
@@ -183,8 +183,8 @@ def explain(item, evidence, triage, job_id, checks):
 
 
 def chat_json(system, user, key, timeout):
-    # OpenAI-compatible JSON-mode call with the model/keys from Settings (or .env); returns the raw JSON text.
-    url = (setting('AI_BASE_URL') or 'https://api.openai.com/v1').rstrip('/')
+    # OpenAI-compatible JSON-mode call with the model/key from Settings (or .env) and the URL from .env; returns the raw JSON text.
+    url = (os.getenv('AI_BASE_URL') or 'https://api.openai.com/v1').rstrip('/')
     url = url if url.endswith('/chat/completions') else url + '/chat/completions'  # accept a base URL or the full endpoint
     response = httpx.post(url,
         headers={'Authorization': 'Bearer ' + setting('AI_API_KEY'), 'Idempotency-Key': key},
