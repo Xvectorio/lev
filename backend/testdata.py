@@ -95,9 +95,12 @@ def push(rows):
 
 def wipe(conn):
     # Loki first: if it refuses, PostgreSQL is untouched. Deleted lines drop out of queries, disk space frees later.
+    # Loki refuses an end in the future; anything newer than now arrives after the wipe anyway.
+    now = int(time.time())
     response = httpx.post(LOKI + '/loki/api/v1/delete', params={
-        'query': '{service=~".+"}', 'start': str(int(time.time()) - 49 * 3600), 'end': str(int(time.time()) + 60)}, timeout=30)
-    response.raise_for_status()
+        'query': '{service=~".+"}', 'start': str(now - 49 * 3600), 'end': str(now)}, timeout=30)
+    if not response.is_success:
+        raise httpx.HTTPError(f'{response.status_code} {response.text.strip()[:200]}')
     conn.execute('SELECT pg_advisory_xact_lock(41001)')  # collector
     conn.execute('SELECT pg_advisory_xact_lock(41002)')  # triage
     conn.execute('TRUNCATE incidents, events, jobs, audit, labels, replays')

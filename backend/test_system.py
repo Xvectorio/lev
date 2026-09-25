@@ -364,7 +364,8 @@ def run():
             deleted = httpx.Response(204, request=httpx.Request('POST', core.LOKI))
             with patch.object(testdata.httpx, 'post', return_value=deleted) as loki_delete:
                 assert client.post('/api/wipe', headers=admin, json=wipe).status_code == 200
-            assert loki_delete.call_args.kwargs['params']['query'] == '{service=~".+"}'
+            params = loki_delete.call_args.kwargs['params']
+            assert params['query'] == '{service=~".+"}' and int(params['end']) <= time.time(), 'Loki rejects future deletes'
             with core.db() as conn:
                 assert conn.execute('SELECT (SELECT count(*) FROM incidents)+(SELECT count(*) FROM jobs)+(SELECT count(*) FROM audit) AS n').fetchone()['n'] == 0
                 assert conn.execute('SELECT count(*) AS n FROM users').fetchone()['n'] == 1, 'Users survive the wipe'
