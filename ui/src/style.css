@@ -128,3 +128,4 @@ td.agree{font-weight:700;color:#176b69}
 .danger-zone button.danger,[data-theme="dark"] .danger-zone button.danger{background:var(--red);border-color:var(--red);color:white;opacity:1}
 [data-theme="dark"] .danger-zone button.danger{color:#111c22}
 .danger-zone button.danger:disabled,[data-theme="dark"] .danger-zone button.danger:disabled{background:transparent;color:var(--red);opacity:.55;cursor:not-allowed}
+.filter-count{align-self:center;font-size:12px;color:var(--muted);white-space:nowrap}

@@ -202,7 +202,7 @@ def get_problem(conn, incident_id, lock=False):
 @app.get('/api/incidents')
 def incidents(service: str = '', status: str = '', category: str = '', minutes: int = Query(0, ge=0), offset: int = Query(0, ge=0), samples: bool = False):
     with db() as conn:
-        return conn.execute(f'''SELECT *,first_ns::text AS first_ns,last_ns::text AS last_ns
+        return conn.execute(f'''SELECT *,first_ns::text AS first_ns,last_ns::text AS last_ns,count(*) OVER () AS total
             FROM incidents i WHERE i.superseded_by IS NULL AND (%s OR NOT {SAMPLE_SQL})
             AND (%s='' OR i.labels->>'service'=%s) AND (%s='' OR i.status=%s)
             AND (%s='' OR i.category=%s)
