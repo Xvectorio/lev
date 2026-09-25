@@ -278,7 +278,8 @@
     catch (e) { error = (e as Error).message; }
     finally { loading = false; }
   }
-  const ago = (ms: number) => ms < 90000 ? `${Math.round(ms/1000)} s ago` : `${Math.round(ms/60000)} min ago`;
+  const ago = (ms: number) => ms < 90000 ? `${Math.round(ms/1000)}s ago` : ms < 5400000 ? `${Math.round(ms/60000)}m ago`
+    : ms < 129600000 ? `${Math.round(ms/3600000)}h ago` : `${Math.round(ms/86400000)}d ago`;
   const sourceState = (s: Source) => !s.last_heartbeat_ns ? 'no heartbeat' : Date.now() - Number(BigInt(s.last_heartbeat_ns)/1000000n) < 3 * (sources?.settings.heartbeat_interval_s ?? 60) * 1000 ? 'live' : 'stale';
   async function loadJev() {
     loading = true; error = '';
@@ -952,7 +953,7 @@
                 <div class="incident-meta"><span>{#if item.level}<span class="severity {item.level}">{item.level}</span> {/if}{item.labels.service}</span><span>{item.occurrences.toLocaleString()} occurrences</span></div>
                 <h2>{item.summary || item.pattern.slice(0, 150)}</h2>
                 <p>Project {item.labels.project_id} · Server {item.labels.server_id} · {item.labels.environment}</p>
-                <div class="incident-meta"><span class="analysis-tag">{item.status} · {item.category}</span><time>{time(item.last_ns)}</time></div>
+                <div class="incident-meta"><span class="analysis-tag">{item.status} · {item.category}</span><time>{time(item.last_ns)} · {ago(Date.now() - Number(BigInt(item.last_ns)/1000000n))}</time></div>
               </button>
               {#if DISMISSABLE.includes(item.status)}<button class="quick-dismiss" title="Dismiss as noise (moves to observing)" onclick={() => dismissIncident(item)}>Dismiss</button>{/if}
             </div>
