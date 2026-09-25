@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import QueryBar from './QueryBar.svelte';
+  import Help from './Help.svelte';
   type Labels = { host: string; server_id: string; project_id: string; service: string; environment: string };
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
   type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
@@ -560,7 +561,7 @@
 
   <main>
     <header class="page-header">
-      <div><p class="breadcrumb">Infrastructure / {view === 'logs' ? 'Explore' : view === 'sources' || view === 'jev' || view === 'settings' ? 'Administer' : 'Investigate'}</p><h1>{view === 'logs' ? 'Log explorer' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev triage' : view === 'settings' ? 'Settings' : 'Incidents'}</h1></div>
+      <div><p class="breadcrumb">Infrastructure / {view === 'logs' ? 'Explore' : view === 'sources' || view === 'jev' || view === 'settings' ? 'Administer' : 'Investigate'}</p><h1>{view === 'logs' ? 'Log explorer' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev triage' : view === 'settings' ? 'Settings' : 'Incidents'} <Help topic={view === 'jev' ? (jevTab === 'overview' ? 'jev' : jevTab) : view} /></h1></div>
       <div class="page-controls"><label class="refresh"><input type="checkbox" bind:checked={autoRefresh}> Refresh every 15s</label><button onclick={logout} title="Log out {auth.user}">Log out</button></div>
     </header>
     {#if error}<div class="alert" role="alert">{error} <button onclick={reload}>Retry</button></div>{/if}
@@ -598,7 +599,7 @@
       <div class="incident-toolbar"><p>Vector instances seen in Loki during the last 24 hours, and how the central worker collects from them.</p><button onclick={loadSources} disabled={loading}>Refresh sources</button></div>
       {#if sources}
         {@const set = sources.settings}
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Collection</h2></div>
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Collection <Help topic="collection" /></h2></div>
           <dl class="settings">
             <div><dt>Worker collection pass</dt><dd>every {set.collect_interval_s} s</dd></div>
             <div><dt>Settling delay</dt><dd>{set.settle_s} s</dd></div>
@@ -611,7 +612,7 @@
             {#each sources.workers as w}<div><dt>{w.name} last run</dt><dd>{ago(Date.now() - Date.parse(w.heartbeat))}{#if Number(w.checkpoint_ns) > 0}&nbsp;· checkpoint {ago(Date.now() - Number(BigInt(w.checkpoint_ns)/1000000n))}{/if}{#if w.error}<span class="severity error">{w.error}</span>{/if}</dd></div>{/each}
           </dl>
         </section>
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Vector sources</h2><span>{sourceRows.length === sources.sources.length ? '' : `${sourceRows.length} of `}{sources.sources.length} servers</span></div>
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Vector sources <Help topic="add-source" /></h2><span>{sourceRows.length === sources.sources.length ? '' : `${sourceRows.length} of `}{sources.sources.length} servers</span></div>
           <div class="source-search"><QueryBar id="source-query" fields={SOURCE_FIELDS} values={sourceValues} bind:text={sourceText} bind:filters={sourceFilters} placeholder={'server_id=web-01 service=nginx "upstream" NOT kernel'} /></div>
           <div class="table-scroll"><table class="sources">
             <thead><tr><th>Project / server</th><th>Host · environment</th><th>Status</th><th>Last heartbeat</th><th>Events 24h</th><th>Services (warn+ events, 24h)</th></tr></thead>
@@ -624,7 +625,7 @@
             </tr>{:else}<tr><td colspan="6" class="empty">{sources.sources.length ? 'No source matches this search.' : 'No Vector instance has forwarded logs in the last 24 hours.'}</td></tr>{/each}</tbody>
           </table></div>
         </section>
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Connect</h2></div>
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Connect <Help topic="connect" /></h2></div>
           <p class="connect">Source servers send logs with the ingest password (<code>VECTOR_PASSWORD</code>); agents use the agent token. Both are generated on first start.</p>
           <div class="task-actions connect"><button onclick={() => copySecret('vector_password', 'Ingest password')}>Copy ingest password</button><button onclick={() => copySecret('agent_token', 'Agent token')}>Copy agent token</button></div>
         </section>

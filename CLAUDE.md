@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Everything runs in Docker.** Do not install Python/Node packages, Vector or a database on the host. Builds, tests, lockfile generation and Vector validation all go through Compose.
 - Internal secrets (Postgres password, ingest password + hash, agent token) live in the `secrets` volume at `/run/lev`, generated once by the `init` service (`ops/init.sh`), which never overwrites them and seeds them from `.env` on upgrades. `.env` is optional (settings, `TYPESAFE_API_KEY`, and in dev `COMPOSE_FILE`). Never print or commit either.
 - `compose.yaml` is the self-contained release file (images only, configs inline — `$$` escapes `$`). Builds and check services live in `compose.dev.yaml`; a dev `.env` sets `COMPOSE_FILE=compose.yaml:compose.dev.yaml[:compose.override.yaml]` so the commands below work unchanged.
-- `README.md` is the operator-facing spec (stages, agent API bodies, reliability limits). Keep it in sync when behavior changes.
+- `README.md` is the operator-facing spec (stages, agent API bodies, reliability limits). Keep it in sync when behavior changes. The in-app `?` help (`ui/src/Help.svelte`, `TOPICS`) is a condensed copy of it: update both.
 
 ## Commands
 
