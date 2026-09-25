@@ -15,6 +15,7 @@ x-backend-env: &backend-env
   LOOKBACK_SECONDS: ${LOOKBACK_SECONDS:-600}
   TRIAGE_CONFIDENCE: ${TRIAGE_CONFIDENCE:-0.8}
   OBSERVE_CONFIDENCE: ${OBSERVE_CONFIDENCE:-0.6}
+  LOG_RETENTION_HOURS: ${LOG_RETENTION_HOURS:-48}
 services:
   init:
     image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
@@ -170,9 +171,9 @@ configs:
         retention_enabled: true
         delete_request_store: filesystem
       limits_config:
-        retention_period: 48h
-        reject_old_samples_max_age: 48h
-        max_query_lookback: 48h
+        retention_period: ${LOG_RETENTION_HOURS:-48}h
+        reject_old_samples_max_age: ${LOG_RETENTION_HOURS:-48}h
+        max_query_lookback: ${LOG_RETENTION_HOURS:-48}h
         max_entries_limit_per_query: 5000
         max_line_size: 256KB
       analytics:
@@ -188,7 +189,7 @@ configs:
         file="/backups/lev-$$(date -u +%Y%m%dT%H%M%SZ).dump"
         if pg_dump -Fc > "$$file.tmp"; then
           mv "$$file.tmp" "$$file"
-          find /backups -name '*.dump' -mtime +14 -delete
+          find /backups -name '*.dump' -mtime +${BACKUP_RETENTION_DAYS:-14} -delete
           echo "Database backup completed"
         else
           rm -f "$$file.tmp"

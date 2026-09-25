@@ -11,6 +11,9 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 NS = 1_000_000_000
+# Loki keeps raw logs this long (compose passes the same value to Loki's limits_config); minimum 24.
+RETENTION_H = max(24, int(os.getenv('LOG_RETENTION_HOURS', '48')))
+RETENTION = RETENTION_H * 3600 * NS
 LOKI = os.getenv('LOKI_URL', 'http://loki:3100')
 
 

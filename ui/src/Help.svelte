@@ -17,7 +17,7 @@
       'In an incident you can record where Jev should have routed it. Verdicts feed the Jev tune wizard and never change the incident.',
     ]},
     logs: { title: 'Searching logs', body: [
-      'Searches Loki, which keeps raw logs for 48 hours. Only warn, error and fatal lines (plus a heartbeat) are stored.',
+      'Searches Loki, which keeps raw logs for 48 hours by default (LOG_RETENTION_HOURS). Only warn, error and fatal lines (plus a heartbeat) are stored.',
       '# Query syntax',
       '- Words must all match: timeout upstream',
       '- "quoted phrase" matches exactly.',
@@ -34,6 +34,7 @@
       'The worker polls Loki every pass from a saved nanosecond checkpoint, re-reading an overlap window (LOOKBACK_SECONDS) to catch late events, and skips the last settling seconds that may still be arriving. Duplicate events count once.',
       'After an outage it catches up in bounded steps. Events delayed longer than the overlap stay searchable but may not become incidents; raise LOOKBACK_SECONDS in .env if shipping is routinely slow.',
       'Collection never waits for Jev or the AI model.',
+      'An outage longer than the raw log retention (LOG_RETENTION_HOURS, default 48 h) loses the expired logs; the worker reports this.',
     ]},
     'add-source': { title: 'Add a source server', body: [
       'Needs Docker on the source server. The easiest route is Claude Code with the lev-vector skill ("install Vector and watch nginx"). By hand:',
@@ -89,6 +90,11 @@
       '# Data',
       '- Load test data: an hour of realistic logs from six made-up servers, ingested like real ones. Jev triages them (spends credits if a key is set).',
       '- Delete all data: removes every incident, verdict, audit entry and every log in Loki, real ones too. Users, settings and policies stay. Type DELETE ALL DATA to confirm; only a backup undoes it.',
+      '# Retention',
+      'Set in .env, then run docker compose up -d:',
+      '- LOG_RETENTION_HOURS (default 48, minimum 24): raw logs in Loki and the longest search range. Collected incident evidence is pruned a day later; incident examples, verdicts and audit are kept.',
+      '- BACKUP_RETENTION_DAYS (default 14): daily database dumps in backups/.',
+      'Incidents, verdicts and audit stay in PostgreSQL until you delete them.',
     ]},
   };
 </script>

@@ -9,7 +9,7 @@ import httpx
 from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 
-from core import NS, complete_logs, db, logs, selector, setting
+from core import NS, RETENTION, complete_logs, db, logs, selector, setting
 from core import ingest as save_events
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -64,14 +64,14 @@ def collect():
         checkpoint = row['checkpoint_ns'] if row and row['checkpoint_ns'] else now - LOOKBACK
         # Catch up faster than real time after downtime. Never silently skip a saturated slice.
         end = min(checkpoint + 10 * 60 * NS, now)
-        start = max(now - 48 * 3600 * NS, checkpoint - LOOKBACK)
+        start = max(now - RETENTION, checkpoint - LOOKBACK)
         if end < start:
             end = min(start + 10 * 60 * NS, now)
         rows = complete_logs('{service=~".+",project_id!="lev-test",environment!="demo",host!~"check_[0-9a-f]{32}"} | json | level=~"warn|error|fatal"', start, end)
         ingest(conn, rows)
-        state(conn, 'collector', 'Some logs expired during worker downtime' if checkpoint < now - 48 * 3600 * NS else None)
+        state(conn, 'collector', 'Some logs expired during worker downtime' if checkpoint < now - RETENTION else None)
         conn.execute("UPDATE worker_state SET checkpoint_ns=%s WHERE name='collector'", (end,))
-        conn.execute('DELETE FROM events WHERE ts_ns < %s', (now - 72 * 3600 * NS,))
+        conn.execute('DELETE FROM events WHERE ts_ns < %s', (now - RETENTION - 24 * 3600 * NS,))
         # Verification requires a successful catch-up pass beyond the observation period.
         candidates = conn.execute('''SELECT * FROM incidents WHERE status='verifying'
             AND verification_ns+900000000000<=%s FOR UPDATE''', (end,)).fetchall()

@@ -6,7 +6,7 @@
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
   type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
   type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string}}[]; label: {route: string; category: string | null; actor: string; at: string} | null };
-  type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
+  type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; retention_h: number; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
   type Source = { project_id: string; server_id: string; host: string; environment: string; services: Record<string, number>; events_24h: number; last_heartbeat_ns: string | null };
   type JevJob = { id: string; incident_id: string; status: string; attempts: number; error: string | null; created_at: string; completed_at: string | null; next_attempt: string; triage: Incident['triage']; labels: Labels; title: string };
   type Jev = { paused: boolean; configured: boolean; settings: Record<string, string | number>; last_24h: {status: string; count: number}[]; routes_24h: {choice: string | null; count: number; avg_confidence: number | null}[]; queue: JevJob[]; jobs: JevJob[] };
@@ -574,7 +574,7 @@
       <h2>Pipeline</h2>
       <p><span class:good={healthy} class="dot"></span> {healthy ? 'Worker collecting' : 'Checking collection'}</p>
       <p>{pending} analyses waiting</p>
-      <small>Raw evidence retained for 48 hours</small>
+      <small>Raw evidence retained for {status?.retention_h ?? 48} hours</small>
       {#each status?.workers.filter(w => w.error) ?? [] as worker}
         <p class="pipeline-error">{worker.name}: {worker.error}</p>
       {/each}

@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 import testdata
 import worker
-from core import LOKI, NS, SAMPLE_SQL, SETTINGS, db, digest, evidence, initialize, logs, secret, selector, setting
+from core import LOKI, NS, RETENTION, RETENTION_H, SAMPLE_SQL, SETTINGS, db, digest, evidence, initialize, logs, secret, selector, setting
 
 
 COOKIE = 'lev_session'
@@ -181,8 +181,8 @@ def search(start: int, end: int, text: str = Query('', max_length=500),
            environment: str = Query('', max_length=200),
            severity: Literal['', 'debug', 'info', 'warn', 'error', 'fatal'] = '',
            limit: int = Query(300, ge=1, le=1000)):
-    if start < 0 or end < start or end - start > 48 * 3600 * NS or end > time.time_ns() + 60 * NS:
-        raise HTTPException(422, 'Choose an ordered time range of at most 48 hours')
+    if start < 0 or end < start or end - start > RETENTION or end > time.time_ns() + 60 * NS:
+        raise HTTPException(422, f'Choose an ordered time range of at most {RETENTION_H} hours')
     result = logs(selector({'service': service, 'host': host, 'server_id': server_id,
                            'project_id': project_id, 'environment': environment}, severity, text), start, end, limit)
     return {'rows': result, 'limited': len(result) == limit}
@@ -251,7 +251,7 @@ def status(samples: bool = False):
                 'incidents': conn.execute(f'SELECT count(*) AS count FROM incidents i WHERE {visible}', (samples,)).fetchone()['count'],
                 'problems': conn.execute(f'SELECT i.status,count(*) FROM incidents i WHERE {visible} GROUP BY i.status', (samples,)).fetchall(),
                 'jev_configured': bool(setting('TYPESAFE_API_KEY', conn)), 'explanations_configured': bool(setting('AI_MODEL', conn)),
-                'categories': list(worker.active_policy(conn)['config']['categories'])}
+                'categories': list(worker.active_policy(conn)['config']['categories']), 'retention_h': RETENTION_H}
 
 
 JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at,j.completed_at,j.next_attempt,
@@ -429,7 +429,7 @@ def label(incident_id: str, body: Label, request: Request):
         else:
             if body.category and body.category not in worker.active_policy(conn)['config']['categories']:
                 raise HTTPException(422, 'Unknown category')
-            # Snapshot the triage input: raw events expire after 72 hours, labels must not.
+            # Snapshot the triage input: raw events expire, labels must not.
             snapshot = {'examples': evidence(conn, incident_id), 'labels': item['labels'], 'occurrences': item['occurrences'],
                         'first_ns': item['first_ns'], 'last_ns': item['last_ns']}
             conn.execute('''INSERT INTO labels(incident_id,route,category,actor,evidence) VALUES (%s,%s,%s,%s,%s)
@@ -629,7 +629,7 @@ def labels():
     now = time.time_ns()
     result = {}
     for name in ('project_id', 'server_id', 'host', 'service', 'environment'):
-        response = httpx.get(f'{LOKI}/loki/api/v1/label/{name}/values', params={'start': str(now - 48 * 3600 * NS), 'end': str(now)}, timeout=10)
+        response = httpx.get(f'{LOKI}/loki/api/v1/label/{name}/values', params={'start': str(now - RETENTION), 'end': str(now)}, timeout=10)
         response.raise_for_status()
         result[name] = [v for v in response.json().get('data', []) if v != 'lev-heartbeat']
     return result
@@ -660,7 +660,7 @@ def sources():
         confidence = worker.active_policy(conn)['config']['thresholds']['investigate']
     return {'sources': sorted(found.values(), key=lambda s: (s['project_id'], s['server_id'])), 'workers': workers,
             'settings': {'collect_interval_s': worker.COLLECT_INTERVAL, 'settle_s': worker.SETTLE // NS,
-                         'lookback_s': worker.LOOKBACK // NS, 'catch_up_s': 600, 'retention_h': 48,
+                         'lookback_s': worker.LOOKBACK // NS, 'catch_up_s': 600, 'retention_h': RETENTION_H,
                          'heartbeat_interval_s': 60, 'observation_s': 900, 'triage_confidence': confidence}}
 
 
