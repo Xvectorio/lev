@@ -264,16 +264,30 @@
 
   let dismissReason = $state('');
   const DISMISSABLE = ['new','review','ready','proposed'];
+  // Deterministic id: a retried submit with the same reason is idempotent. Blank reason -> server default.
+  const postDismiss = (item: {id: string, generation: number}, reason = '') =>
+    api(`/incidents/${item.id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json','X-Lev-Request':'1'},
+      body:JSON.stringify({generation:item.generation,request_id:`ui-${item.id.slice(0,12)}-g${item.generation}`,reason:reason.trim()})});
   async function dismissIncident(item: {id: string, generation: number}, reason = '') {
     try {
-      // Deterministic id: a retried submit with the same reason is idempotent. Blank reason -> server default.
-      await api(`/incidents/${item.id}/dismiss`, {method:'POST',headers:{'Content-Type':'application/json','X-Lev-Request':'1'},
-        body:JSON.stringify({generation:item.generation,request_id:`ui-${item.id.slice(0,12)}-g${item.generation}`,reason:reason.trim()})});
+      await postDismiss(item, reason);
       dismissReason = '';
       if (selected?.id === item.id) await openIncident(item.id);
       await loadIncidents(); await refreshStatus();
       notice = 'Incident moved to observing. A recurrence or re-triage can bring it back.';
     } catch(e) {error=(e as Error).message;}
+  }
+  async function dismissAll() {
+    const items = incidents.filter(i => DISMISSABLE.includes(i.status));
+    if (!confirm(`Dismiss all ${items.length} listed incidents as noise? They move to observing.`)) return;
+    let done = 0;
+    try { for (const item of items) { await postDismiss(item); done++; } }
+    catch(e) {error=(e as Error).message;}
+    finally {
+      if (selected && items.some(i => i.id === selected!.id)) await openIncident(selected.id);
+      await loadIncidents(); await refreshStatus();
+      notice = `${done} incidents moved to observing. A recurrence or re-triage can bring them back.`;
+    }
   }
 
   async function loadSources() {
@@ -952,6 +966,7 @@
       <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><label>Last seen<select bind:value={seenMinutes}><option value="">Any time</option><option value="60">Last hour</option><option value="1440">Last 24 hours</option><option value="10080">Last 7 days</option><option value="43200">Last 30 days</option></select></label><button type="submit">Filter incidents</button><button type="button" class="icon-button" onclick={clearIncidentFilters} aria-label="Clear filters" title="Clear filters"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h14l-5.5 7v6l-3 2v-8z"/><path d="M16 14l5 5M21 14l-5 5"/></svg></button><span class="filter-count">{(incidents[0]?.total ?? 0).toLocaleString()} found</span></form>
       <div class="investigation" class:with-detail={selected !== null}>
         <section class="incident-list" aria-label="Incidents">
+          {#if incidents.some(i => DISMISSABLE.includes(i.status))}<div class="list-actions"><button onclick={dismissAll} disabled={loading} title="Dismiss all incidents on this page as noise (moves them to observing)">Dismiss all</button></div>{/if}
           {#each incidents as item}
             <div class="incident-item">
               <button class="incident" class:selected={selected?.id === item.id} onclick={(e) => openFromList(item.id, e.currentTarget)}>
