@@ -88,7 +88,7 @@ def run():
         assert core.fingerprint(rows[0])[0] == core.fingerprint({**rows[0], 'message': rows[0]['message'].replace('one', 'two')})[0]
         assert core.fingerprint({**rows[0], 'message': 'HTTP 401'})[0] != core.fingerprint({**rows[0], 'message': 'HTTP 500'})[0]
         assert '\\"' in core.selector({'service':'x"} |= "escape'})
-        assert core.selector({}, '', 'refused "pool exhausted" NOT timeout') == '{service=~".+"} |= "refused" |= "pool exhausted" != "timeout"'
+        assert core.selector({}, '', 'refused "pool exhausted" NOT timeout') == '{service=~".+",service!="lev-heartbeat"} |= "refused" |= "pool exhausted" != "timeout"'
 
         # Fail the provider; ingestion still works and the checkpoint advances.
         with patch.object(worker.httpx, 'post', side_effect=httpx.ConnectError('provider offline')):

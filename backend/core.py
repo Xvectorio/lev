@@ -92,7 +92,9 @@ def digest(value):
 def selector(labels=None, severity='', text=''):
     parts = [f'{key}={json.dumps(value)}' for key, value in (labels or {}).items()
              if value and key in ('host', 'server_id', 'project_id', 'service', 'environment')]
-    query = '{' + ','.join(parts or ['service=~".+"']) + '}'
+    if not (labels or {}).get('service'):  # heartbeats only prove liveness; ask for service=lev-heartbeat to see them
+        parts += ['service=~".+"', 'service!="lev-heartbeat"']
+    query = '{' + ','.join(parts) + '}'
     if severity:
         query += f' | json | level={json.dumps(severity)}'
     # Splunk-style terms: every word or "quoted phrase" must match; NOT excludes the next term.

@@ -58,7 +58,7 @@ The **Theme** control offers System, Light and Dark modes. Your choice is saved 
 
 ![Log explorer with field filters, histogram and event stream](screenshots/log-explorer.png)
 
-- **Svelte 5 + TypeScript + Vite**, static assets served by Caddy. The **Incidents** workspace opens first; a Splunk-inspired explorer offers search, time/service/host/severity filters, fields and an interactive histogram of the loaded events. The histogram is explicitly a bounded result view, not a full-volume metric.
+- **Svelte 5 + TypeScript + Vite**, static assets served by Caddy. The **Incidents** workspace opens first; a Splunk-inspired explorer offers search, time/service/host/severity filters, fields and an interactive histogram of the loaded events. The histogram is explicitly a bounded result view, not a full-volume metric. Collector heartbeats are hidden unless you filter on service `lev-heartbeat`.
 - **FastAPI + PostgreSQL** serve the app and persist checkpoints, deduplication keys, jobs, retained evidence and the audit trail. No Redis or Celery.
 - **Vector → Loki**, independently of PostgreSQL and AI. Loki stores raw evidence for 48 hours (`LOG_RETENTION_HOURS` in `.env`, minimum 24; collected events in PostgreSQL are pruned a day later); selected issue examples/context survive in PostgreSQL. Loki's compactor deletes asynchronously, so physical deletion is not exactly at hour 48.
 - **Jev** classifies category and actionability using typed Choice questions at `/v1/systemone`. Model/version, probabilities, confidence and the policy version are retained. The default `0.8` confidence gate is a starting setting, not a validated accuracy guarantee; tune it on your own labelled logs (below).

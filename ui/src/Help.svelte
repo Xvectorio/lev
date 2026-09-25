@@ -17,7 +17,7 @@
       'In an incident you can record where Jev should have routed it. Verdicts feed the Jev tune wizard and never change the incident.',
     ]},
     logs: { title: 'Searching logs', body: [
-      'Searches Loki, which keeps raw logs for 48 hours by default (LOG_RETENTION_HOURS). Only warn, error and fatal lines (plus a heartbeat) are stored.',
+      'Searches Loki, which keeps raw logs for 48 hours by default (LOG_RETENTION_HOURS). Only warn, error and fatal lines (plus a heartbeat, hidden unless you filter service=lev-heartbeat) are stored.',
       '# Query syntax',
       '- Words must all match: timeout upstream',
       '- "quoted phrase" matches exactly.',
