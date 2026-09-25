@@ -38,7 +38,7 @@
       'An outage longer than the raw log retention (LOG_RETENTION_HOURS, default 48 h) loses the expired logs; the worker reports this.',
     ]},
     'add-source': { title: 'Add a source server', body: [
-      'Needs Docker on the source server. The easiest route is Claude Code with the lev-vector skill ("install Vector and watch nginx"). By hand:',
+      'The easiest route is Claude Code with the lev-vector skill ("install Vector and watch nginx"). By hand:',
       '- Download vector-compose.yaml and vector.env.example from the latest GitHub release into /opt/lev-vector, rename them to compose.yaml and .env, and create an empty watch.d/ directory.',
       '$ chmod 600 .env',
       '- In .env set VECTOR_PROJECT_ID (e.g. payments-prod) and VECTOR_SERVER_ID (e.g. eu-west-1-app-03): stable, low-cardinality IDs.',
@@ -51,6 +51,10 @@
       '# Extra log sources',
       'Add a file per service in watch.d/<name>.yaml (a src_<name> source plus a watch_<name> remap setting .lev_service) with read-only mounts in compose.override.yaml. Never edit the shared vector.yaml; to quiet noise a server already collects (e.g. UFW blocks), put VRL that lowers .level in watch.d/local.vrl. Include tests: with real sample lines and check that secrets are redacted.',
       'Do not collect the same app through both its file and journal source. Container IDs change on redeploy; refresh container watch files afterwards.',
+      '# Without Docker',
+      'On a systemd server without Docker, download vector-install.sh from the same release and run it as root. It installs the matching Vector package with Lev\'s config in /etc/vector/. Set the same values (without JOURNAL_GID) in /etc/default/vector, then:',
+      '$ systemctl enable --now vector',
+      'Watch files go in /etc/vector/watch.d/ and need no mounts, but the vector user must be able to read the files they watch. Docker container logs are not collected. Rerun a newer vector-install.sh to upgrade.',
     ]},
     connect: { title: 'Connecting agents', body: [
       'Lev does not fix things itself. An external agent (e.g. Claude Code with the lev-agent skill) fetches ready tasks, investigates read-only, submits a proposal, waits for your approval, then applies it and reports every check.',

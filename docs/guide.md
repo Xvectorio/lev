@@ -2,7 +2,7 @@
 
 The in-depth reference for running Lev: how the pipeline works, installation and accounts, log sources, the agent API, reliability limits, HTTPS, backups and development. For a short introduction and quick start, see the [README](../README.md).
 
-**Everything runs in Docker**, including builds, tests and Vector on source servers. The host needs Docker Engine and Compose only. No host Python packages, Node packages, database, web server or Vector installation is needed.
+**Everything runs in Docker**, including builds, tests and Vector on source servers. The host needs Docker Engine and Compose only. No host Python packages, Node packages, database, web server or Vector installation is needed. The one exception: a source server without Docker can run Vector as a native systemd service ([Without Docker](#source-server-without-docker)).
 
 ## How it works
 
@@ -115,7 +115,7 @@ docker compose logs --tail=50 vector
 docker compose restart vector
 ```
 
-## Add a source server (Docker only)
+## Add a source server
 
 On the source server, download `vector-compose.yaml` and `vector.env.example` from the [latest release](https://github.com/Xvectorio/lev/releases/latest) into a directory such as `/opt/lev-vector`, rename them to `compose.yaml` and `.env` (`chmod 600 .env`), create an empty `watch.d/` directory, and set:
 
@@ -146,6 +146,23 @@ The source has read-only host log mounts and a persistent 512 MiB disk buffer. I
 Only warnings, errors and fatal events (plus one small collector heartbeat per minute) are sent to central storage. ISO timestamps are parsed, common exception continuations are joined (an exception merged under an info line is forwarded as an error), and common key/value credentials (including quoted values), bearer tokens and whole `Authorization`/`Cookie` header values are redacted **before the disk sink buffer**. Only whitelisted fields are forwarded. Redaction is pattern-based: test service-specific secret formats before onboarding a source. IDs stay in the body, not Loki labels. Container logs without a structured service name fall back to `container`; configure the application service field for useful targeting.
 
 Sources start at the current end on first installation. Checkpoints resume on restart. A full buffer applies backpressure, but logs can still expire from the source's own rotation during long outages. Keep source rotation longer than your expected outage budget. Loki rejects samples older than 48 hours, and late samples may also fall outside its per-stream ordering window.
+
+### Source server without Docker
+
+Servers with systemd can run the same pipeline as a native service. Download `vector-install.sh` from the [latest release](https://github.com/Xvectorio/lev/releases/latest) and run it as root:
+
+```sh
+sudo sh vector-install.sh
+```
+
+It installs the official Vector `.deb`/`.rpm` (the same version as the `lev-vector` image, amd64 or arm64), puts that release's `vector.yaml` and `local.vrl` in `/etc/vector/`, creates `/etc/vector/watch.d/`, and adds a systemd drop-in that starts Vector with the same config and `watch.d/local.vrl` handling as the container. Set the variables listed above (without `JOURNAL_GID`) in `/etc/default/vector`, which stays `chmod 600`, then start it with `systemctl enable --now vector`. `journalctl -u vector` shows its logs. To upgrade, run the new release's `vector-install.sh`: it keeps `/etc/default/vector` and `watch.d/` and restarts Vector.
+
+The differences from the container:
+
+- Vector runs as the `vector` user, in the `adm` and `systemd-journal` groups. It reads the journal and `/var/log/apps/<service>/*.log`, but any other file you watch must be readable by it (for example `setfacl -m u:vector:r <file>`).
+- `/host/var/log` is a symlink to `/var/log`, so `vector.yaml` and watch files are identical to the container's. Other paths in watch files use their real path, and need no mount.
+- Docker container logs (`/host/docker/containers`) are not collected. If the server runs Docker, use the container install.
+- Apply `watch.d` changes with `systemctl restart vector`. Validate first with `sudo sh -c 'set -a; . /etc/default/vector; [ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector validate --no-environment --config-dir /etc/vector/watch.d /etc/vector/vector.yaml'`.
 
 ## Agent integration
 

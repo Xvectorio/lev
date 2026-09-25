@@ -52,6 +52,7 @@ jobs:
           sed "s/LEV_VERSION:-latest/LEV_VERSION:-${TAG#v}/" vector/compose.yaml > dist/vector-compose.yaml
           cp .env.example dist/env.example
           cp vector/.env.example dist/vector.env.example
+          sed "s/LEV_VERSION:-latest/LEV_VERSION:-${TAG#v}/" vector/install.sh > dist/vector-install.sh
           # vX.Y.Z-rc.N etc. are prereleases, so releases/latest (the README install link) keeps serving the last final release.
           case "$TAG" in *-*) pre=--prerelease ;; *) pre= ;; esac
           gh release create "$TAG" dist/* --title "Lev $TAG" --generate-notes $pre

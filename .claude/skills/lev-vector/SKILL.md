@@ -5,7 +5,7 @@ description: Install and configure Vector on a server so it ships logs to Lev, a
 
 # Lev Vector
 
-Vector on each server reads logs, normalizes and redacts them, and pushes **warn/error/fatal plus a 60s heartbeat** to Lev (Caddy → Loki). Everything runs in Docker. Never install Vector on the host.
+Vector on each server reads logs, normalizes and redacts them, and pushes **warn/error/fatal plus a 60s heartbeat** to Lev (Caddy → Loki). It runs in Docker. The only exception is a source server without Docker: there it runs as a native systemd service installed by Lev's `vector-install.sh` (see **Native**). Never install Vector on the host any other way.
 
 **Lev repo:** the central Lev checkout. If this skill is invoked from another project, paths below (`vector/`, `compose.yaml`, `compose.tools.yaml`, `backend/…`) are relative to that repo, and central-host commands run there.
 
@@ -30,6 +30,14 @@ Vector on each server reads logs, normalizes and redacts them, and pushes **warn
 | Apply | `docker compose up -d vector` | `docker compose up -d` |
 | Logs | `docker compose logs --since 2m vector` | same, in the `vector/` dir |
 
+**Native** (source server without Docker, `systemctl cat vector` shows a `lev.conf` drop-in): settings in `/etc/default/vector`, watch files in `/etc/vector/watch.d/`, apply with `systemctl restart vector`, logs with `journalctl -u vector --since -2min`. There are no mounts: `/host/var/log` is a symlink to `/var/log`, and any other path is used as-is, but it must be readable by the `vector` user (`sudo -u vector head -1 <file>`; fix with `setfacl -m u:vector:r <file>`). Docker container logs are not collected natively. Native validate and test:
+
+```sh
+sudo sh -c 'set -a; . /etc/default/vector; [ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector validate --no-environment --config-dir /etc/vector/watch.d /etc/vector/vector.yaml'
+sudo env VECTOR_HOST=test-host VECTOR_SERVER_ID=test-server VECTOR_PROJECT_ID=test-project VECTOR_ENVIRONMENT=test \
+  sh -c '[ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector test /etc/vector/vector.yaml /etc/vector/watch.d/*.yaml'
+```
+
 `/var/log` is already mounted at `/host/var/log`. Docker's containers dir is mounted at `/host/docker/containers` on source servers. On the central host, add mounts to the `vector` service in the untracked `compose.override.yaml` (create it if missing); add the containers dir there when you first watch a container. Any other path P gets `- P:/host/P:ro`.
 
 Validate and test (source server; on the central host `docker compose -f compose.tools.yaml run --rm vector-check` / `vector-test` do the same):
@@ -43,9 +51,9 @@ docker compose run --rm --no-deps -e VECTOR_HOST=test-host -e VECTOR_SERVER_ID=t
 
 ## A. Install on a new server
 
-Skip if a Lev Vector container is already running (`docker ps --format '{{.Image}}' | grep -E 'lev-vector|timberio/vector'`).
+Skip if a Lev Vector container is already running (`docker ps --format '{{.Image}}' | grep -E 'lev-vector|timberio/vector'`) or the native service is (`systemctl is-active vector`).
 
-1. Check prerequisites: `docker compose version`. Persistent journal: `/var/log/journal` exists. If not, tell the user journald is volatile and only files/containers will be collected.
+1. Check prerequisites: `docker compose version`. If Docker isn't installed, don't install it: ask the user whether to use the native install (step 5) instead. Persistent journal: `/var/log/journal` exists. If not, tell the user journald is volatile and only files/containers will be collected.
 2. Copy `compose.yaml`, `.env.example` and an empty `watch.d/` from the Lev repo's `vector/` dir onto the server (e.g. `/opt/lev-vector`). Take them from the repo, not from memory. The shared `vector.yaml` ships inside the `ghcr.io/xvectorio/lev-vector` image.
 3. Create `.env` from `.env.example` with `chmod 600`:
    - `VECTOR_HOST`: `hostname -s`.
@@ -56,6 +64,7 @@ Skip if a Lev Vector container is already running (`docker ps --format '{{.Image
    - `VECTOR_PASSWORD`: ask the user to copy it from Lev → **Sources** → **Copy ingest password** and paste it into the file themselves. Don't handle it in chat.
    - Leave `VECTOR_CONTAINER_GLOB=SELECT_CONTAINER_ID`. Containers go in `watch.d`.
 4. Validate, then `docker compose up -d`. Check logs for errors. `401` means the password is wrong; `connection refused`/TLS means the endpoint is wrong. The heartbeat appears on the Lev **Sources** page within about 2 minutes. Ask the user to confirm it if you can't see it.
+5. **Native (no Docker, systemd only).** Download `vector-install.sh` from the Lev release the central host runs (`https://github.com/Xvectorio/lev/releases/download/v<version>/vector-install.sh`, or `releases/latest/download/…`) and run `sudo sh vector-install.sh`. Fill `/etc/default/vector` as in step 3, but without `JOURNAL_GID` (the `vector` user is already in `systemd-journal`); the user pastes the password there themselves. Validate (see **Native** above), then `systemctl enable --now vector` and check as in step 4. To upgrade, rerun a newer `vector-install.sh`.
 
 ## B. "Watch <thing>"
 
@@ -82,9 +91,9 @@ For each new source:
 
 1. Read 20–50 real lines (`tail`). Find: the level format, whether multi-line stack traces occur, and any secrets or personal data the shared redaction misses. It covers bearer tokens and `password|secret|token|api_key|authorization|cookie` key=value.
 2. Copy `template.yaml` from this skill to `watch.d/<thing>.yaml` and fill it in. Use real sample lines in the tests, with secrets replaced: at least one line that must reach Lev at the right level, and one routine line that must be dropped.
-3. Add read-only mounts for new paths.
+3. Add read-only mounts for new paths (native: none, just check the `vector` user can read them).
 4. Validate and run the tests, and fix until both pass.
-5. Apply: `up -d`. A new mount recreates the container, but checkpoints persist in the `vector_data` volume.
+5. Apply: `up -d` (native: `systemctl restart vector`). A new mount recreates the container, but checkpoints persist in the `vector_data` volume.
 6. Confirm in the Vector logs: `Found new file to watch` for each path, and no `ERROR`.
 
 ## C. Log format for your own apps
