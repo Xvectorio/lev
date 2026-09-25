@@ -536,10 +536,13 @@
 
 <svelte:head><title>{view === 'logs' ? 'Logs' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev' : view === 'settings' ? 'Settings' : 'Incidents'} · Lev</title></svelte:head>
 
+{#snippet mark()}<svg class="brand-mark" viewBox="0 0 48 32" aria-hidden="true"><g fill="#19564f"><rect width="6.7" height="6.5" rx="1.2"/><rect y="10.3" width="6.7" height="6.5" rx="1.2"/><rect y="20.5" width="6.7" height="6.5" rx="1.2"/><rect x="10" y=".4" width="29.6" height="5.6" rx="1.2"/><rect x="10" y="10.6" width="22.3" height="5.6" rx="1.2"/><rect x="10" y="20.8" width="9.5" height="5.6" rx="1.2"/></g><path d="M24.5 22l5.3 5.5L44 12.5" fill="none" stroke="#1ca66a" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{/snippet}
+
 {#if !auth?.user}
 <main class="auth-page">
   <form class="auth-card" onsubmit={submitAuth} aria-busy={!auth}>
-    <p class="brand"><span class="brand-mark" aria-hidden="true">≋</span> Lev</p>
+    <p class="brand">{@render mark()} LEV</p>
+    <p class="brand-sub">LOG EVENT VERIFIER</p>
     {#if !auth}<p class="muted">Loading…</p>{:else}
     <h1>{auth.setup_required ? 'Create admin account' : 'Log in'}</h1>
     {#if auth.setup_required}
@@ -558,8 +561,8 @@
 {:else}
 <div class="shell">
   <aside class="sidebar">
-    <a class="brand" href="/" aria-label="Lev home"><span class="brand-mark" aria-hidden="true">≋</span> Lev</a>
-    <p class="workspace">Detect · Investigate · Resolve</p>
+    <div><a class="brand" href="/" aria-label="Lev home">{@render mark()} LEV</a>
+    <p class="workspace brand-sub">LOG EVENT VERIFIER</p></div>
     <nav aria-label="Main navigation">
       <button class:active={view === 'logs'} onclick={() => switchView('logs')}><span aria-hidden="true">⌕</span> Log explorer</button>
       <button class:active={view === 'incidents'} onclick={() => switchView('incidents')}><span aria-hidden="true">▤</span> Incidents <span class="count">{status?.incidents ?? '—'}</span></button>

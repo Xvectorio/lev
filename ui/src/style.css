@@ -113,3 +113,7 @@ td.agree{font-weight:700;color:#176b69}
 .help-head{display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:inherit;padding:16px 0 8px}.help-head h2{margin:0;font-size:17px}.help-panel h3{margin:16px 0 6px;font-size:14px}.help-panel p{margin:0 0 8px;max-width:70ch}.help-item{padding-left:14px;text-indent:-14px}.help-item::before{content:'• ';color:var(--muted)}.help-panel pre{margin:0 0 8px;padding:6px 10px;background:#f0f5f6;border-radius:5px}
 [data-theme="dark"] .help-panel{background:#1b2a32}[data-theme="dark"] .help-panel pre{background:#111c22}
 .danger-zone{flex-direction:column;align-items:stretch;margin:12px 20px 20px;border:2px solid var(--red)}.danger-zone label{max-width:320px}button.danger{align-self:start;background:var(--red);border-color:var(--red);color:white;font-weight:600}[data-theme="dark"] button.danger{color:#111c22}
+/* Logo mark: teal bars, green check (colours from the Lev logo). */
+.brand{font-weight:700;letter-spacing:2px}.brand .brand-mark,.sidebar .brand .brand-mark{display:block;background:none;width:auto;height:1.15em;border-radius:0}
+.brand-sub{font-size:10px;font-weight:600;letter-spacing:2px;color:var(--muted);margin:-10px 0 0}
+.sidebar .brand-sub{margin:2px 0 0;color:#b6c9dc}
