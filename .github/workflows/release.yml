@@ -36,6 +36,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: LEV_VERSION=${{ github.ref_name }}
   release:
     needs: image
     runs-on: ubuntu-latest

@@ -4,7 +4,9 @@ WORKDIR /app
 COPY ui/package*.json ./
 RUN npm ci
 COPY ui/ ./
-RUN npm run check && npm run build
+# Release tag shown in the UI footer; set by the release workflow.
+ARG LEV_VERSION=dev
+RUN npm run check && VITE_LEV_VERSION=$LEV_VERSION npm run build
 FROM --platform=$BUILDPLATFORM caddy:2.10-builder-alpine AS caddy
 ARG TARGETOS TARGETARCH
 # Cloudflare DNS-01 module; used only when CLOUDFLARE_API_TOKEN is set (ops/edge.sh).

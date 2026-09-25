@@ -808,7 +808,7 @@
         {/if}
       </div>
     {/if}
-    <footer>All times shown in your local timezone. <span>Lev [Rc 1.1]</span></footer>
+    <footer>All times shown in your local timezone. <span>Lev [{import.meta.env.VITE_LEV_VERSION ?? 'dev'}]</span></footer>
   </main>
 </div>
 {/if}
