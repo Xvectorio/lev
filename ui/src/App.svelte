@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import QueryBar from './QueryBar.svelte';
   type Labels = { host: string; server_id: string; project_id: string; service: string; environment: string };
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
   type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
@@ -37,56 +38,21 @@
   let sources = $state<Sources | null>(null);
   let text = $state(''), service = $state(''), severity = $state('');
   let minutes = $state('60');
-  // Splunk-style query bar: field=value tokens become label filters; other words must all match.
   const FIELDS = ['project_id','server_id','host','service','environment','level'];
   let labelValues = $state<Record<string, string[]>>({ level: ['warn','error','fatal'] });
-  let suggesting = $state(false), queryInput = $state<HTMLInputElement>();
-  const quote = (v: string) => /[\s"]/.test(v) ? JSON.stringify(v) : v;
-  // Completed field=value tokens move out of the text into removable filter chips.
-  let filters = $state<Record<string, string>>({});
-  function absorb(all = false) {
-    const token = all ? /(^|\s)(\w+)=(?!\w+=)("(?:[^"\\]|\\.)*"|\S+)(?=\s|$)/g : /(^|\s)(\w+)=(?!\w+=)("(?:[^"\\]|\\.)*"|\S+)(?=\s)/g;
-    const next = { ...filters };
-    let rest = text.replace(token, (match, lead, key, raw) => {
-      if (!FIELDS.includes(key)) return match;
-      try { next[key] = raw.startsWith('"') ? JSON.parse(raw) : raw; } catch { return match; }
-      return lead;
-    });
-    if (all) rest = rest.replace(/(^|\s)(\w+)=(?=\s|$)/g, (match, lead, key) => FIELDS.includes(key) ? lead : match).replace(/\s+/g, ' ').trim();
-    if (rest !== text) { filters = next; text = rest.replace(/^\s+/, ''); }
-  }
+  let filters = $state<Record<string, string>>({}), queryBar = $state<QueryBar>();
   function setFilter(field: string, value: string) { filters = { ...filters, [field]: value }; }
-  function removeFilter(field: string) { const { [field]: _, ...kept } = filters; filters = kept; queryInput?.focus(); }
-  const lastToken = $derived(text.match(/\S*$/)?.[0] ?? '');
-  const suggestions = $derived.by(() => {
-    const pair = lastToken.match(/^(\w+)=(.*)$/);
-    if (pair && labelValues[pair[1]]) {
-      const typed = pair[2].replace(/^"/, '').toLowerCase();
-      return labelValues[pair[1]].filter(v => v.toLowerCase().includes(typed) && quote(v) !== pair[2])
-        .sort((a, b) => Number(!a.toLowerCase().startsWith(typed)) - Number(!b.toLowerCase().startsWith(typed))).slice(0, 12).map(v => `${pair[1]}=${quote(v)}`);
-    }
-    return lastToken ? FIELDS.filter(f => f.startsWith(lastToken) && f !== lastToken).map(f => f + '=') : [];
-  });
-  function pick(suggestion: string) {
-    text = text.replace(/\S*$/, suggestion) + (suggestion.endsWith('=') ? '' : ' ');
-    absorb();
-    queryInput?.focus();
-  }
-  function suggestKeys(e: KeyboardEvent) {
-    const buttons = [...document.querySelectorAll<HTMLElement>('#query-suggestions button')];
-    const at = buttons.indexOf(document.activeElement as HTMLElement);
-    if (e.key === 'Backspace' && e.target === queryInput && !text) { const keys = Object.keys(filters); if (keys.length) { e.preventDefault(); removeFilter(keys[keys.length - 1]); } }
-    else if (e.key === 'Escape') { suggesting = false; queryInput?.focus(); }
-    else if (e.key === 'ArrowDown' && buttons.length) { e.preventDefault(); suggesting = true; buttons[Math.min(at + 1, buttons.length - 1)].focus(); }
-    else if (e.key === 'ArrowUp' && at >= 0) { e.preventDefault(); (at === 0 ? queryInput : buttons[at - 1])?.focus(); }
-  }
-  // Sources page search: same syntax as the log query bar, matched client-side (substring, case-insensitive).
+  // Sources page search: same query bar as the log explorer, matched client-side. Chips match a value exactly,
+  // words (and a field=value still being typed) match as case-insensitive substrings.
   const SOURCE_FIELDS = ['project_id','server_id','host','service','environment'];
-  let sourceQuery = $state('');
+  let sourceText = $state(''), sourceFilters = $state<Record<string, string>>({});
+  const sourceValues = $derived(Object.fromEntries(SOURCE_FIELDS.map(f => [f, [...new Set((sources?.sources ?? [])
+    .flatMap(s => f === 'service' ? Object.keys(s.services) : [String(s[f as keyof Source])]))].sort()])));
   const sourceRows = $derived.by(() => {
-    const terms = [...sourceQuery.toLowerCase().matchAll(/(not\s+)?(?:(\w+)=)?("[^"]*"?|\S+)/g)]
-      .map(([, not, field, v]) => ({ not: !!not, field, v: v.replace(/"/g, '') })).filter(t => t.v);
-    const match = (t: typeof terms[number], name: string) => name.toLowerCase().includes(t.v) !== t.not;
+    const terms = [...sourceText.toLowerCase().matchAll(/(not\s+)?(?:(\w+)=)?("[^"]*"?|\S+)?/g)]
+      .map(([, not, field, v = '']) => ({ not: !!not, field, v: v.replace(/"/g, ''), exact: false })).filter(t => t.v)
+      .concat(Object.entries(sourceFilters).map(([field, v]) => ({ not: false, field, v: v.toLowerCase(), exact: true })));
+    const match = (t: typeof terms[number], name: string) => (t.exact ? name.toLowerCase() === t.v : name.toLowerCase().includes(t.v)) !== t.not;
     return (sources?.sources ?? []).map(s => {
       const values = (field?: string) => field === 'service' ? Object.keys(s.services)
         : field ? (SOURCE_FIELDS.includes(field) ? [String(s[field as keyof Source])] : [])
@@ -183,8 +149,7 @@
     const controller = new AbortController(); activeSearch = controller;
     loading = true; error = ''; notice = '';
     const end = BigInt(Date.now()) * 1000000n;
-    suggesting = false;
-    absorb(true);
+    queryBar?.absorb(true);
     const params = new URLSearchParams({ text, service: filters.service ?? '', host: filters.host ?? '', server_id: filters.server_id ?? '',
       project_id: filters.project_id ?? '', environment: filters.environment ?? '', severity: filters.level ?? severity,
       start: range?.start ?? String(end - BigInt(minutes) * 60n * 1000000000n), end: range?.end ?? String(end) });
@@ -603,17 +568,7 @@
 
     {#if view === 'logs'}
       <form class="filters" onsubmit={(e) => { e.preventDefault(); search(); }}>
-        <div class="search-field" role="group" aria-label="Log query" onfocusout={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) suggesting = false; }}>
-          <label for="query">Search</label>
-          <div class="query-box">
-            {#each Object.entries(filters) as [field, value] (field)}<button type="button" class="token" aria-label={`Remove filter ${field}=${value}`} title="Remove filter" onclick={() => removeFilter(field)}>{field}=<b>{value}</b><span aria-hidden="true">×</span></button>{/each}
-            <input id="query" type="text" role="combobox" aria-autocomplete="list" autocomplete="off" spellcheck="false" bind:this={queryInput} bind:value={text} onkeydown={suggestKeys} oninput={() => { suggesting = true; absorb(); }}
-              placeholder={Object.keys(filters).length ? 'Add words or field=value' : 'server_id=web-01 service=kernel "connection refused" NOT timeout'} aria-describedby="query-help" aria-expanded={suggesting && suggestions.length > 0} aria-controls="query-suggestions">
-            {#if Object.keys(filters).length || text}<button type="button" class="clear" aria-label="Clear query" title="Clear query" onclick={() => { filters = {}; text = ''; queryInput?.focus(); }}>×</button>{/if}
-            {#if suggesting && suggestions.length}<div class="suggestions" id="query-suggestions" role="listbox" tabindex="-1" onkeydown={suggestKeys}>{#each suggestions as suggestion}<button type="button" role="option" aria-selected="false" onclick={() => pick(suggestion)}>{suggestion.endsWith('=') ? suggestion : suggestion.slice(suggestion.indexOf('=') + 1).replace(/^"|"$/g, '')}</button>{/each}</div>{/if}
-          </div>
-          <p id="query-help" class="query-help">Fields: {#each FIELDS as f}<button type="button" onclick={() => { text = (text.trim() + ' ' + f + '=').trimStart(); suggesting = true; queryInput?.focus(); }}>{f}</button>{/each} · words must all match · <code>"exact phrase"</code> · <code>NOT word</code></p>
-        </div>
+        <QueryBar bind:this={queryBar} id="query" fields={FIELDS} values={labelValues} bind:text bind:filters placeholder={'server_id=web-01 service=kernel "connection refused" NOT timeout'} />
         <div class="filter-row">
           <label>Severity<select bind:value={severity}><option value="">All captured levels</option><option>warn</option><option>error</option><option>fatal</option></select></label>
           <label>Time range<select bind:value={minutes} onchange={() => range = null}><option value="15">Last 15 minutes</option><option value="60">Last hour</option><option value="360">Last 6 hours</option><option value="1440">Last 24 hours</option><option value="2880">Last 48 hours</option></select></label>
@@ -657,14 +612,7 @@
           </dl>
         </section>
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Vector sources</h2><span>{sourceRows.length === sources.sources.length ? '' : `${sourceRows.length} of `}{sources.sources.length} servers</span></div>
-          <div class="search-field source-search">
-            <label for="source-query">Search</label>
-            <div class="query-box">
-              <input id="source-query" type="text" autocomplete="off" spellcheck="false" bind:value={sourceQuery} placeholder='server_id=web-01 service=nginx "upstream" NOT kernel' aria-describedby="source-query-help">
-              {#if sourceQuery}<button type="button" class="clear" aria-label="Clear search" title="Clear search" onclick={() => sourceQuery = ''}>×</button>{/if}
-            </div>
-            <p id="source-query-help" class="query-help">Fields: {#each SOURCE_FIELDS as f}<button type="button" onclick={() => { sourceQuery = (sourceQuery.trim() + ' ' + f + '=').trimStart(); document.getElementById('source-query')?.focus(); }}>{f}</button>{/each} · words must all match · <code>"exact phrase"</code> · <code>NOT word</code></p>
-          </div>
+          <div class="source-search"><QueryBar id="source-query" fields={SOURCE_FIELDS} values={sourceValues} bind:text={sourceText} bind:filters={sourceFilters} placeholder={'server_id=web-01 service=nginx "upstream" NOT kernel'} /></div>
           <div class="table-scroll"><table class="sources">
             <thead><tr><th>Project / server</th><th>Host · environment</th><th>Status</th><th>Last heartbeat</th><th>Events 24h</th><th>Services (warn+ events, 24h)</th></tr></thead>
             <tbody>{#each sourceRows as { s, services }}<tr>
