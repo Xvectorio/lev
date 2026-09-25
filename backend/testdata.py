@@ -26,52 +26,82 @@ psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec'''
 def generate(now=None):
     now = now or time.time_ns()
     # Loki drops lines over an hour older than a stream's newest, so everything fits in 55 minutes and reloads still land.
-    start, end = now - 55 * 60 * NS, now - 60 * NS
-    storm = now - 40 * 60 * NS  # 10-minute database connection storm that cascades up the stack
+    start = now - 55 * 60 * NS
     rows = []
 
-    def emit(count, host, service, level, make, lo=start, hi=end):
+    def emit(count, host, service, level, message, ago=(55, 1)):
+        # message: text or a callable for per-line variation (ids, durations, IPs); ago: (from, to) minutes before now.
         project, environment = HOSTS[host]
         labels = {'host': host, 'server_id': host, 'project_id': project, 'service': service, 'environment': environment}
         for _ in range(count):
-            ts, message = random.randint(lo, hi), make()
+            ts = random.randint(now - ago[0] * 60 * NS, now - ago[1] * 60 * NS)
+            text = message() if callable(message) else message
             stamp = datetime.fromtimestamp(ts / NS, timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z')
-            raw = json.dumps({'timestamp': stamp, 'message': message, 'level': level, **labels,
+            raw = json.dumps({'timestamp': stamp, 'message': text, 'level': level, **labels,
                               'source': 'journald', 'process_id': str(random.randint(900, 60000))})
-            rows.append({'ts_ns': str(ts), 'labels': labels, 'message': message, 'level': level, 'raw': raw})
+            rows.append({'ts_ns': str(ts), 'labels': labels, 'message': text, 'level': level, 'raw': raw})
 
     pid = lambda: f'pid={random.randint(20000, 90000)} db=shop user=checkout '
     order = lambda: f'order_id=ORD-{random.randint(100000, 999999)}'
-    storm_window = {'lo': storm, 'hi': storm + 10 * 60 * NS}
-    # The storm: postgres runs out of connections, the API pool times out, nginx returns 504s.
-    emit(40, 'db-01', 'postgresql', 'error', lambda: pid() + 'FATAL:  sorry, too many clients already', **storm_window)
+    request = lambda: f'request_id={uuid.uuid4()}'
+    ip = lambda: f'{random.randint(1, 223)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}'
+    storm = (40, 30)
+    # Story: at -40 min postgres runs out of connections and it cascades up to nginx; at -20 someone rotates the
+    # reporting password; the invoice disk fills and the mail relay's DNS breaks; at -12 a staging deploy lacks a secret.
+    # Clear failures (ready), harmless noise (observing) and deliberately borderline cases (review) cover every category.
+
+    # database
+    emit(40, 'db-01', 'postgresql', 'error', lambda: pid() + 'FATAL:  sorry, too many clients already', storm)
     emit(12, 'db-01', 'postgresql', 'error', lambda: pid() + 'ERROR:  canceling statement due to statement timeout\n'
-         'STATEMENT:  SELECT o.id, sum(l.amount) FROM orders o JOIN order_lines l ON l.order_id = o.id WHERE o.customer_id = $1 GROUP BY o.id', **storm_window)
-    emit(60, 'app-01', 'checkout-api', 'error', lambda: POOL_TIMEOUT.format(uuid.uuid4()), **storm_window)
-    emit(80, 'web-01', 'nginx', 'error', lambda: 'upstream timed out (110: Connection timed out) while reading response header from upstream, '
-         f'server: shop.example.com, request: "POST /api/checkout HTTP/2.0", upstream: "http://10.0.1.12:8000/api/checkout", request_id={uuid.uuid4().hex}', **storm_window)
-    # Steady background problems.
+         'STATEMENT:  SELECT o.id, sum(l.amount) FROM orders o JOIN order_lines l ON l.order_id = o.id WHERE o.customer_id = $1 GROUP BY o.id', storm)
+    emit(60, 'app-01', 'checkout-api', 'error', lambda: POOL_TIMEOUT.format(uuid.uuid4()), storm)
     emit(7, 'db-01', 'postgresql', 'error', lambda: pid() + 'ERROR:  deadlock detected\nHINT:  See server log for query details.\n'
          'STATEMENT:  UPDATE inventory SET reserved = reserved + $1 WHERE sku = $2')
+    emit(15, 'db-01', 'postgresql', 'warn', lambda: pid() + 'WARNING:  there is no transaction in progress')
+    emit(2, 'db-01', 'postgresql', 'warn', lambda: pid() + 'WARNING:  replication slot "standby_1" is 2143 MB behind; WAL is being retained', (8, 1))
+    # dependency
+    emit(80, 'web-01', 'nginx', 'error', lambda: 'upstream timed out (110: Connection timed out) while reading response header from upstream, '
+         f'server: shop.example.com, request: "POST /api/checkout HTTP/2.0", upstream: "http://10.0.1.12:8000/api/checkout", request_id={uuid.uuid4().hex}', storm)
     emit(34, 'app-01', 'checkout-api', 'warn', lambda: f'Payment provider responded 429 Too Many Requests {order()}; retrying in {random.choice([1, 2, 4])}s (attempt 2/3)')
     emit(4, 'app-01', 'checkout-api', 'error', lambda: f'{order()} payment capture failed: provider returned 502 Bad Gateway after 3 retries')
-    emit(1, 'app-01', 'kernel', 'error', lambda: 'Out of memory: Killed process 23817 (gunicorn) total-vm:2489320kB, anon-rss:1843212kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:4212kB oom_score_adj:0',
-         lo=now - 16 * 60 * NS, hi=now - 15 * 60 * NS)
-    emit(1, 'app-01', 'systemd', 'warn', lambda: 'checkout-api.service: Main process exited, code=killed, status=9/KILL',
-         lo=now - 15 * 60 * NS, hi=now - 14 * 60 * NS)
-    # The invoice disk fills up during the last half hour.
-    emit(6, 'worker-01', 'invoice-worker', 'warn', lambda: 'Disk usage on /var/lib/invoices above 90% threshold', lo=now - 35 * 60 * NS)
-    emit(18, 'worker-01', 'invoice-worker', 'error', lambda: f'request_id={uuid.uuid4()} render_invoice failed\nTraceback (most recent call last):\n'
+    emit(20, 'worker-01', 'invoice-worker', 'warn', 'Exchange-rate API responded 503 Service Unavailable; using cached rates from 2 hours ago')
+    # resources
+    emit(30, 'web-01', 'nginx', 'error', 'accept4() failed (24: Too many open files)', (36, 31))
+    emit(1, 'app-01', 'kernel', 'error', 'Out of memory: Killed process 23817 (gunicorn) total-vm:2489320kB, anon-rss:1843212kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:4212kB oom_score_adj:0', (16, 15))
+    emit(1, 'app-01', 'systemd', 'warn', 'checkout-api.service: Main process exited, code=killed, status=9/KILL', (15, 14))
+    emit(6, 'worker-01', 'invoice-worker', 'warn', 'Disk usage on /var/lib/invoices above 90% threshold', (35, 1))
+    emit(18, 'worker-01', 'invoice-worker', 'error', lambda: f'{request()} render_invoice failed\nTraceback (most recent call last):\n'
          '  File "/srv/billing/render.py", line 88, in render_invoice\n    pdf.write(path)\n'
-         f"OSError: [Errno 28] No space left on device: '/var/lib/invoices/tmp/{uuid.uuid4().hex}.pdf'", lo=now - 25 * 60 * NS)
-    # Noise that should be observed rather than fixed.
+         f"OSError: [Errno 28] No space left on device: '/var/lib/invoices/tmp/{uuid.uuid4().hex}.pdf'", (25, 1))
+    # authentication
+    emit(25, 'db-01', 'postgresql', 'error', lambda: f'pid={random.randint(20000, 90000)} db=shop user=reporting FATAL:  password authentication failed for user "reporting"', (20, 1))
+    emit(14, 'worker-01', 'invoice-worker', 'error', 'Token refresh for mail provider failed: 401 invalid_grant (refresh token has been revoked)', (30, 1))
+    emit(9, 'app-01', 'checkout-api', 'error', lambda: f'{request()} rejected payment webhook: signature verification failed for key_id=whsec_live_2')
+    emit(3, 'web-01', 'sudo', 'warn', 'pam_unix(sudo:auth): authentication failure; logname=deploy uid=1001 euid=0 tty=/dev/pts/0 ruser=deploy rhost=  user=deploy')
+    # configuration
+    emit(12, 'stg-app-01', 'checkout-api', 'fatal', 'Startup aborted: required setting STRIPE_WEBHOOK_SECRET is not set', (12, 1))
+    emit(3, 'web-01', 'nginx', 'warn', 'conflicting server name "shop.example.com" on 0.0.0.0:443, ignored', (50, 45))
+    emit(8, 'worker-01', 'invoice-worker', 'warn', lambda: f'Job invoice.generate exceeded soft time limit ({random.choice([60, 61, 63])}s); retrying')
+    # network
+    emit(11, 'worker-01', 'invoice-worker', 'error', 'SMTP connect to smtp.mailrelay.example.net:587 failed: [Errno -3] Temporary failure in name resolution', (18, 1))
+    emit(5, 'app-01', 'checkout-api', 'warn', 'Redis connection reset by peer; reconnected after 1 attempt')
+    emit(2, 'edge-01', 'kernel', 'warn', 'igb 0000:03:00.1 eth1: igb: eth1 NIC Link is Down', (27, 26))
+    emit(3, 'edge-01', 'kernel', 'warn', 'TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.  Check SNMP counters.', (34, 32))
     for port, count in ((22, 90), (3389, 40), (23, 25), (5432, 8)):
         emit(count, 'edge-01', 'kernel', 'warn', lambda port=port: f'[UFW BLOCK] IN=eth0 OUT= MAC=52:54:00:9a:1c:07:fe:ff:ff:ff:ff:ff:08:00 '
-             f'SRC={random.randint(1, 223)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)} DST=203.0.113.10 LEN=44 '
-             f'TOS=0x00 PREC=0x00 TTL={random.randint(40, 250)} ID={random.randint(1, 65535)} PROTO=TCP SPT={random.randint(1024, 65535)} DPT={port} WINDOW=1024 RES=0x00 SYN URGP=0')
+             f'SRC={ip()} DST=203.0.113.10 LEN=44 TOS=0x00 PREC=0x00 TTL={random.randint(40, 250)} ID={random.randint(1, 65535)} '
+             f'PROTO=TCP SPT={random.randint(1024, 65535)} DPT={port} WINDOW=1024 RES=0x00 SYN URGP=0')
     expiry = (datetime.fromtimestamp(now / NS, timezone.utc) + timedelta(days=6)).strftime('%Y-%m-%dT09:14:00Z')
-    emit(6, 'stg-app-01', 'checkout-api', 'warn', lambda: f'TLS certificate for staging.shop.example.com expires in 6 days (notAfter={expiry})')
-    emit(22, 'stg-app-01', 'checkout-api', 'warn', lambda: 'DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version.')
+    emit(6, 'stg-app-01', 'checkout-api', 'warn', f'TLS certificate for staging.shop.example.com expires in 6 days (notAfter={expiry})')
+    # application
+    emit(13, 'app-01', 'checkout-api', 'error', lambda: f'{request()} POST /api/checkout/guest failed\nTraceback (most recent call last):\n'
+         '  File "/app/checkout/serializers.py", line 57, in to_internal_value\n    address = data["shipping_address"]\n'
+         "KeyError: 'shipping_address'")
+    emit(2, 'app-01', 'checkout-api', 'error', 'Order reconciliation mismatch: 3 orders in state PAID have no ledger entry', (22, 3))
+    emit(22, 'stg-app-01', 'checkout-api', 'warn', 'DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version.')
+    # unknown: too little to go on
+    emit(2, 'web-01', 'systemd-journald', 'warn', 'Missed 23 kernel messages', (29, 28))
+    emit(1, 'worker-01', 'invoice-worker', 'error', 'Unexpected state; giving up', (9, 8))
     rows.sort(key=lambda row: int(row['ts_ns']))
     # Every host forwards a heartbeat each minute, as Vector does.
     beats = []

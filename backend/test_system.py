@@ -347,6 +347,10 @@ def run():
                 assert item['status'] == 'review' and item['triage']['policy_version'] == 2 and item['summary'], item
                 assert conn.execute("SELECT count(*) AS n FROM jobs WHERE status='done' AND error LIKE 'Explanation fell back%%'").fetchone()['n'] == 1
             assert client.get('/api/jev', headers=admin).json()['settings']['triage_confidence'] == .8
+            usage = client.get('/api/jev', headers=admin, params={'hours': 1}).json()
+            triage_use = next(u for u in usage['usage'] if u['kind'] == 'triage')
+            assert triage_use['calls'] >= 1 and usage['usd_per_mtok'] > 0 and isinstance(usage['log_lines'], int), usage
+            assert client.get('/api/jev', headers=admin, params={'hours': 0}).status_code == 422
             assert client.get('/api/logs',headers=admin,params={'start':ts,'end':ts+49*3600*core.NS}).status_code == 422
             source = next(s for s in client.get('/api/sources',headers=admin).json()['sources'] if s['server_id'] == schema)
             assert source['services'] == {'checkout': 1} and source['last_heartbeat_ns'] is None, source
@@ -354,7 +358,7 @@ def run():
             assert schema in client.get('/api/labels',headers=admin).json()['server_id']
             # Test data lands in Loki and becomes incidents; the wipe needs the typed phrase and empties everything.
             loaded = client.post('/api/testdata', headers=admin).json()
-            assert loaded['logs'] > 400 and loaded['incidents'] >= 15 and not loaded['loki_warning'], loaded
+            assert loaded['logs'] > 600 and loaded['incidents'] >= 36 and not loaded['loki_warning'], loaded
             assert client.get('/api/logs', headers=admin, params={'host': 'db-01', 'start': time.time_ns()-7*3600*core.NS, 'end': time.time_ns()}).json(), 'Test logs are searchable'
             assert client.post('/api/wipe', headers=admin, json={'confirm': 'yes'}).status_code == 422
             wipe = {'confirm': 'DELETE ALL DATA'}

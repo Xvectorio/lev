@@ -251,7 +251,8 @@ def status(samples: bool = False):
                 'incidents': conn.execute(f'SELECT count(*) AS count FROM incidents i WHERE {visible}', (samples,)).fetchone()['count'],
                 'problems': conn.execute(f'SELECT i.status,count(*) FROM incidents i WHERE {visible} GROUP BY i.status', (samples,)).fetchall(),
                 'jev_configured': bool(setting('TYPESAFE_API_KEY', conn)), 'explanations_configured': bool(setting('AI_MODEL', conn)),
-                'categories': list(worker.active_policy(conn)['config']['categories']), 'retention_h': RETENTION_H}
+                'categories': list(worker.active_policy(conn)['config']['categories']), 'retention_h': RETENTION_H,
+                'backup_retention_days': int(os.getenv('BACKUP_RETENTION_DAYS', '14'))}
 
 
 JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at,j.completed_at,j.next_attempt,
@@ -259,8 +260,13 @@ JEV_JOBS = """SELECT j.id,j.incident_id,j.status,j.attempts,j.error,j.created_at
     FROM jobs j JOIN incidents i ON i.id=j.incident_id """
 
 
+# TypeSafe bills input tokens only (docs.typesafe.ai/models, jev-1.13); update when the price changes.
+JEV_USD_PER_MTOK = 0.042
+
+
 @app.get('/api/jev')
-def jev():
+def jev(hours: int = Query(24, ge=1, le=24 * 90)):
+    window = "now()-make_interval(hours=>%(hours)s)"
     with db() as conn:
         paused = conn.execute("SELECT value FROM settings WHERE name='jev_paused'").fetchone()
         policy = worker.active_policy(conn)
@@ -268,13 +274,26 @@ def jev():
                 'settings': {'model': policy['config']['model'], 'policy_version': policy['id'],
                              'triage_confidence': policy['config']['thresholds']['investigate'],
                              'observe_confidence': policy['config']['thresholds']['observe']},
-                'last_24h': conn.execute("""SELECT status,count(*) FROM jobs
-                    WHERE coalesce(completed_at,created_at)>now()-interval '24 hours' GROUP BY status""").fetchall(),
-                'routes_24h': conn.execute("""SELECT result->'triage'->'answers'->'actionability'->>'choice' AS choice,count(*),
+                'hours': hours,
+                'last_24h': conn.execute(f"""SELECT status,count(*) FROM jobs
+                    WHERE coalesce(completed_at,created_at)>{window} GROUP BY status""", {'hours': hours}).fetchall(),
+                'routes_24h': conn.execute(f"""SELECT result->'triage'->'answers'->'actionability'->>'choice' AS choice,count(*),
                     round(avg((result->'triage'->'answers'->'actionability'->>'confidence')::numeric),3) AS avg_confidence
-                    FROM jobs WHERE status='done' AND completed_at>now()-interval '24 hours' GROUP BY 1""").fetchall(),
+                    FROM jobs WHERE status='done' AND completed_at>{window} GROUP BY 1""", {'hours': hours}).fetchall(),
+                # Every Jev call stores its token usage: triage jobs under result.triage, tune-wizard replays as result.
+                'usage': conn.execute(f"""SELECT kind,count(*) AS calls,count(DISTINCT incident_id) AS incidents,
+                    coalesce(sum((t->'usage'->>'input_tokens')::bigint),0)::bigint AS input_tokens,
+                    coalesce(sum((t->'usage'->>'output_tokens')::bigint),0)::bigint AS output_tokens
+                    FROM (SELECT 'triage' AS kind,incident_id,result->'triage' AS t,completed_at FROM jobs WHERE result ? 'triage'
+                          UNION ALL SELECT 'replay',incident_id,result,completed_at FROM replays WHERE result IS NOT NULL) calls
+                    WHERE completed_at>{window} GROUP BY kind""", {'hours': hours}).fetchall(),
+                'usd_per_mtok': JEV_USD_PER_MTOK,
+                # Collected warn/error/fatal lines; events are pruned a day after Loki retention.
+                'log_lines': conn.execute('SELECT count(*) AS n FROM events WHERE ts_ns>%s',
+                                          (time.time_ns() - hours * 3600 * NS,)).fetchone()['n'],
                 'queue': conn.execute(JEV_JOBS + "WHERE j.status IN ('pending','running') ORDER BY j.next_attempt,j.created_at LIMIT 500").fetchall(),
-                'jobs': conn.execute(JEV_JOBS + "WHERE j.status NOT IN ('pending','running') ORDER BY coalesce(j.completed_at,j.created_at) DESC LIMIT 100").fetchall()}
+                'jobs': conn.execute(JEV_JOBS + f"""WHERE j.status NOT IN ('pending','running') AND coalesce(j.completed_at,j.created_at)>{window}
+                    ORDER BY coalesce(j.completed_at,j.created_at) DESC LIMIT 100""", {'hours': hours}).fetchall()}
 
 
 @app.get('/api/settings')

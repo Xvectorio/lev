@@ -6,10 +6,11 @@
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
   type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
   type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string}}[]; label: {route: string; category: string | null; actor: string; at: string} | null };
-  type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; retention_h: number; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
+  type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; retention_h: number; backup_retention_days: number; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
   type Source = { project_id: string; server_id: string; host: string; environment: string; services: Record<string, number>; events_24h: number; last_heartbeat_ns: string | null };
   type JevJob = { id: string; incident_id: string; status: string; attempts: number; error: string | null; created_at: string; completed_at: string | null; next_attempt: string; triage: Incident['triage']; labels: Labels; title: string };
-  type Jev = { paused: boolean; configured: boolean; settings: Record<string, string | number>; last_24h: {status: string; count: number}[]; routes_24h: {choice: string | null; count: number; avg_confidence: number | null}[]; queue: JevJob[]; jobs: JevJob[] };
+  type Jev = { paused: boolean; configured: boolean; settings: Record<string, string | number>; last_24h: {status: string; count: number}[]; routes_24h: {choice: string | null; count: number; avg_confidence: number | null}[]; queue: JevJob[]; jobs: JevJob[];
+    hours: number; log_lines: number; usd_per_mtok: number; usage: {kind: 'triage' | 'replay'; calls: number; incidents: number; input_tokens: number; output_tokens: number}[] };
   type Sources = { sources: Source[]; workers: Status['workers']; settings: Record<string, number> };
   let theme = $state(document.documentElement.dataset.themePreference || 'system');
   const systemTheme = matchMedia('(prefers-color-scheme: dark)');
@@ -48,6 +49,9 @@
     dataBusy = false;
   }
   let jevData = $state<Jev | null>(null);
+  const JEV_WINDOWS: [number, string][] = [[1, 'Last hour'], [24, 'Last 24 hours'], [168, 'Last 7 days'], [720, 'Last 30 days']];
+  let jevHours = $state(24);
+  const usd = (n: number) => '$' + (n > 0 && n < 0.01 ? n.toFixed(4) : n.toFixed(2));
   let sources = $state<Sources | null>(null);
   let text = $state(''), service = $state(''), severity = $state('');
   let minutes = $state('60');
@@ -264,7 +268,7 @@
   const sourceState = (s: Source) => !s.last_heartbeat_ns ? 'no heartbeat' : Date.now() - Number(BigInt(s.last_heartbeat_ns)/1000000n) < 3 * (sources?.settings.heartbeat_interval_s ?? 60) * 1000 ? 'live' : 'stale';
   async function loadJev() {
     loading = true; error = '';
-    try { jevData = await api('/jev'); }
+    try { jevData = await api('/jev?hours=' + jevHours); }
     catch (e) { error = (e as Error).message; }
     finally { loading = false; }
   }
@@ -320,8 +324,13 @@
     pause: 'Stop calling Jev. Logs are still collected and new incidents wait in the queue.',
     retry: 'Queue failed jobs again, for example after fixing a key or URL in Settings. Stored Jev answers are reused.',
     cancel: 'Drop every pending job. Those incidents stay untriaged until you use Triage again.',
-    jobs: 'Triage jobs in the last 24 hours by status. done = judged, failed = gave up after a provider error.',
-    judged: 'Jev\'s actionability choice in the last 24 hours, with its average confidence.',
+    jobs: 'Triage jobs in the timeframe by status. done = judged, failed = gave up after a provider error.',
+    judged: 'Jev\'s actionability choice in the timeframe, with its average confidence.',
+    log_lines: 'Warn, error and fatal lines the collector grouped into incidents. Raw events are kept 72 hours.',
+    triaged_incidents: 'Distinct incidents Jev judged. Many log lines share one incident, so this is far lower than the line count.',
+    calls: 'Paid Jev requests: one per triage job, plus tune-wizard replays.',
+    tokens: 'Input tokens Jev reported. Output tokens are free.',
+    cost: 'Input tokens × the TypeSafe list price. An estimate: your invoice is authoritative. Explanation model costs are not included.',
     queued: 'Waiting for Jev, oldest first. Jobs that failed wait longer before each retry.'};
   // Jev tuning: immutable policy versions, operator labels and threshold what-ifs over stored answers.
   type Criterion = string | Record<string, string | string[]>;
@@ -670,8 +679,17 @@
         </form>
         <p class="connect muted">Network, domain and HTTPS settings (<code>SITE_ADDRESS</code>, ports, <code>CLOUDFLARE_API_TOKEN</code>) configure the containers themselves: change them in <code>.env</code> and run <code>docker compose up -d</code>.</p>
       </section>
+      <section class="log-panel admin-panel"><div class="panel-heading"><h2>Retention</h2><span>set in .env</span></div>
+        {#if status}<dl class="settings">
+          <div><dt>Raw logs in Loki (LOG_RETENTION_HOURS)</dt><dd>{status.retention_h} h</dd></div>
+          <div><dt>Collected events in PostgreSQL</dt><dd>{status.retention_h + 24} h</dd></div>
+          <div><dt>Database backups (BACKUP_RETENTION_DAYS)</dt><dd>{status.backup_retention_days} days</dd></div>
+          <div><dt>Incidents, verdicts, audit</dt><dd>kept until deleted</dd></div>
+        </dl>{/if}
+        <p class="connect muted">To change retention, set <code>LOG_RETENTION_HOURS</code> (minimum 24, whole days recommended) or <code>BACKUP_RETENTION_DAYS</code> in <code>.env</code> and run <code>docker compose up -d</code>. Shortening log retention lets Loki delete older logs at its next compaction.</p>
+      </section>
       <section class="log-panel admin-panel"><div class="panel-heading"><h2>Data</h2><span>test data and reset</span></div>
-        <p class="connect">Load an hour of realistic logs from six made-up servers (web-01, app-01, db-01, worker-01, edge-01, stg-app-01): a database connection storm, a filling disk, payment retries, firewall noise. They go through the normal pipeline, so Jev triages them and spends TypeSafe credits if a key is set.</p>
+        <p class="connect">Load an hour of realistic logs from six made-up servers (web-01, app-01, db-01, worker-01, edge-01, stg-app-01): about 35 incidents across every triage category: a database connection storm, a rotated password, a filling disk, a broken staging deploy, firewall noise and some deliberately borderline cases. They go through the normal pipeline, so Jev triages them and spends TypeSafe credits if a key is set.</p>
         <div class="task-actions connect"><button onclick={() => dataAction('/testdata')} disabled={dataBusy}>{dataBusy ? 'Working…' : 'Load test data'}</button></div>
         <div class="alert connect danger-zone">
           <div><strong>⚠ Danger: delete all data.</strong> Permanently removes every incident, triage result, verdict, proposal, audit entry and every log in Loki, real ones included. Logs that arrive afterwards start fresh. Users, settings and policy versions are kept. There is no undo; only a backup restores it.</div>
@@ -864,8 +882,17 @@
             <div class="task-actions connect"><button class="primary" onclick={() => loadJevTab('tune')}>Open the tune wizard</button></div>
           </section>
         {/if}
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Last 24 hours</h2></div>
+        {@const used = (kind: string) => d.usage.find(u => u.kind === kind) ?? {calls: 0, incidents: 0, input_tokens: 0, output_tokens: 0}}
+        {@const tokens = d.usage.reduce((sum, u) => sum + u.input_tokens, 0)}
+        {@const calls = d.usage.reduce((sum, u) => sum + u.calls, 0)}
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Activity</h2>
+            <select class="window" aria-label="Timeframe" bind:value={jevHours} onchange={loadJev}>{#each JEV_WINDOWS as [h, name]}<option value={h}>{name}</option>{/each}</select></div>
           <dl class="settings">
+            <div><dt title={TIPS.log_lines}>Log lines collected</dt><dd>{d.log_lines.toLocaleString()}{#if d.hours > 72} <span class="muted">last 72 h only</span>{/if}</dd></div>
+            <div><dt title={TIPS.triaged_incidents}>Incidents triaged</dt><dd>{used('triage').incidents.toLocaleString()}</dd></div>
+            <div><dt title={TIPS.calls}>Jev calls</dt><dd>{calls.toLocaleString()}{#if used('replay').calls} <span class="muted">{used('replay').calls} tune replays</span>{/if}</dd></div>
+            <div><dt title={TIPS.tokens}>Input tokens</dt><dd>{tokens.toLocaleString()}{#if calls} <span class="muted">≈ {Math.round(tokens / calls).toLocaleString()} per call</span>{/if}</dd></div>
+            <div><dt title={TIPS.cost}>Estimated Jev cost</dt><dd>{usd(tokens / 1e6 * d.usd_per_mtok)} <span class="muted">at {usd(d.usd_per_mtok)} / M input tokens</span></dd></div>
             {#each d.last_24h as row}<div><dt title={TIPS.jobs}>Jobs {row.status}</dt><dd>{row.count}</dd></div>{/each}
             {#each d.routes_24h as row}<div><dt title={TIPS.judged}>Judged {row.choice ?? 'n/a'}</dt><dd>{row.count} <span class="muted">avg {pct(row.avg_confidence)}</span></dd></div>{/each}
             {#if !d.last_24h.length}<div><dt>Activity</dt><dd>No triage jobs</dd></div>{/if}
@@ -882,7 +909,7 @@
             </tr>{:else}<tr><td colspan="4" class="empty">No pending jobs. Every incident episode has been triaged.</td></tr>{/each}</tbody>
           </table></div>
         </section>
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Recent jobs</h2><span>finished, failed and cancelled · newest 100</span></div>
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Recent jobs</h2><span>finished, failed and cancelled · newest 100 in the timeframe</span></div>
           <div class="table-scroll"><table class="sources">
             <thead><tr><th>Incident</th><th>Status</th><th>Judgment</th><th>When</th></tr></thead>
             <tbody>{#each d.jobs as j}<tr>
