@@ -200,16 +200,17 @@ def get_problem(conn, incident_id, lock=False):
 
 
 @app.get('/api/incidents')
-def incidents(service: str = '', status: str = '', category: str = '', offset: int = Query(0, ge=0), samples: bool = False):
+def incidents(service: str = '', status: str = '', category: str = '', minutes: int = Query(0, ge=0), offset: int = Query(0, ge=0), samples: bool = False):
     with db() as conn:
         return conn.execute(f'''SELECT *,first_ns::text AS first_ns,last_ns::text AS last_ns
             FROM incidents i WHERE i.superseded_by IS NULL AND (%s OR NOT {SAMPLE_SQL})
             AND (%s='' OR i.labels->>'service'=%s) AND (%s='' OR i.status=%s)
             AND (%s='' OR i.category=%s)
+            AND (%s=0 OR i.last_ns >= (extract(epoch FROM now())::bigint - %s*60)*1000000000)
             ORDER BY CASE i.status WHEN 'approved' THEN 0 WHEN 'proposed' THEN 1 WHEN 'ready' THEN 2
                 WHEN 'review' THEN 3 WHEN 'new' THEN 4 WHEN 'verifying' THEN 5 WHEN 'observing' THEN 6 ELSE 7 END,
                 i.last_ns DESC LIMIT 100 OFFSET %s''',
-            (samples, service, service, status, status, category, category, offset)).fetchall()
+            (samples, service, service, status, status, category, category, minutes, minutes, offset)).fetchall()
 
 
 @app.get('/api/incidents/{incident_id}')

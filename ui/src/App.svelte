@@ -87,7 +87,7 @@
   async function loadLabels() {
     try { labelValues = { ...(await api('/labels')), level: ['warn','error','fatal'] }; } catch {}
   }
-  let problemStatus = $state(''), category = $state(''), problemOffset = $state(0);
+  let problemStatus = $state(''), category = $state(''), seenMinutes = $state(''), problemOffset = $state(0), filtered = $state(false);
   const stages = ['new','review','ready','observing','proposed','approved','verifying','resolved'];
   let rows = $state<Log[]>([]), incidents = $state<Incident[]>([]), selected = $state<Detail | null>(null);
   let status = $state<Status | null>(null), error = $state(''), notice = $state('');
@@ -184,9 +184,13 @@
     finally { if (activeSearch === controller) loading = false; }
   }
 
+  function clearIncidentFilters() {
+    service = ''; problemStatus = ''; category = ''; seenMinutes = ''; problemOffset = 0; loadIncidents();
+  }
   async function loadIncidents() {
     loading = true; error = '';
-    try { incidents = await api('/incidents?' + new URLSearchParams({service, status: problemStatus, category, offset: String(problemOffset)})); }
+    filtered = !!(service || problemStatus || category || seenMinutes);
+    try { incidents = await api('/incidents?' + new URLSearchParams({service, status: problemStatus, category, minutes: seenMinutes || '0', offset: String(problemOffset)})); }
     catch (e) { error = (e as Error).message; }
     finally { loading = false; }
   }
@@ -944,7 +948,7 @@
       <div class="incident-toolbar"><p>Actionable incidents, from first evidence to verified resolution.</p><button onclick={loadIncidents} disabled={loading}>Refresh incidents</button></div>
       <div class="workflow" aria-label="Incident workflow">{#each ['ready','proposed','verifying','resolved'] as stage}<button class:chosen={problemStatus===stage} onclick={() => {problemStatus=problemStatus===stage?'':stage;problemOffset=0;loadIncidents();}}><span>{stage==='ready'?'Ready for agent':stage==='proposed'?'Fix proposed':stage==='verifying'?'Verifying':'Resolved'}</span><strong>{stageCount(stage)}</strong></button>{/each}</div>
       {#if status && !status.jev_configured}<p class="notice">Jev is not connected. Incidents and evidence are being collected; configure the server-side TypeSafe API key to enable triage.</p>{/if}
-      <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><button type="submit">Filter incidents</button></form>
+      <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><label>Last seen<select bind:value={seenMinutes}><option value="">Any time</option><option value="60">Last hour</option><option value="1440">Last 24 hours</option><option value="10080">Last 7 days</option><option value="43200">Last 30 days</option></select></label><button type="submit">Filter incidents</button><button type="button" onclick={clearIncidentFilters}>Clear filters</button></form>
       <div class="investigation" class:with-detail={selected !== null}>
         <section class="incident-list" aria-label="Incidents">
           {#each incidents as item}
@@ -957,7 +961,7 @@
               </button>
               {#if DISMISSABLE.includes(item.status)}<button class="quick-dismiss" title="Dismiss as noise (moves to observing)" onclick={() => dismissIncident(item)}>Dismiss</button>{/if}
             </div>
-          {:else}<div class="empty"><h3>No incidents detected</h3><p>Warnings, failures and actionable symptoms appear after the next collection pass. Connect a source server to start.</p></div>{/each}
+          {:else}{#if filtered}<div class="empty"><h3>No incidents match your filters</h3><p>Nothing passes the current service, stage, category or time filters.</p><button onclick={clearIncidentFilters}>Clear filters</button></div>{:else}<div class="empty"><h3>No incidents detected</h3><p>Warnings, failures and actionable symptoms appear after the next collection pass. Connect a source server to start.</p></div>{/if}{/each}
           <div class="pagination"><button disabled={problemOffset===0} onclick={()=>{problemOffset=Math.max(0,problemOffset-100);loadIncidents();}}>Previous</button><span>Page {problemOffset/100+1}</span><button disabled={incidents.length<100} onclick={()=>{problemOffset+=100;loadIncidents();}}>Next</button></div>
         </section>
         {#if selected}
