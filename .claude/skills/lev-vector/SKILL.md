@@ -17,7 +17,7 @@ Vector on each server reads logs, normalizes and redacts them, and pushes **warn
   - `.lev_service`: the service label. Keep it short and stable: `nginx`, `payments-api`.
   - `.lev_level`: the level, only for formats the shared parser misses.
   - `.message`: extra redaction only.
-- To silence or promote lines this server already collects (e.g. firewall blocks in the journal), use `watch.d/local.vrl`, never `vector.yaml`. It runs as the `local` remap after the shared levelling, so it sees `.message`, `.level`, `.service`, and may only set `.level` (only warn/error/fatal reach Lev) or `abort` to drop. Test it with `insert_at: local` / `extract_from: relevant` in a watch file's `tests:`. Without the file, a no-op default from the image is used.
+- To silence or promote lines this server already collects (e.g. firewall blocks in the journal), use `watch.d/local.vrl` (create it if missing, keep existing rules), never `vector.yaml` or the default `local.vrl` beside it (both are replaced on upgrades). It runs as the `local` remap after the shared levelling, so it sees `.message`, `.level`, `.service`, and may only set `.level` (only warn/error/fatal reach Lev) or `abort` to drop. Test it with `insert_at: local` / `extract_from: relevant` in a watch file's `tests:`. Without the file, a no-op default from the image is used.
 - Never add labels (Loki cardinality), and never add a second sink, `docker.sock`, a `/` mount or write access.
 - Never print `.env` or the ingestion password.
 

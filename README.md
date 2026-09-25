@@ -39,7 +39,7 @@ Expected output:
 api-1  |   Lev first-run setup code: 3fa1-9c0e-b27d
 ```
 
-Open http://localhost:8080 (or `http://<server>:8080`), enter the setup code and create your admin account. Then add your TypeSafe API key under **Settings** to turn on triage. This host's own journal is collected immediately; to add more servers, see [Add a source server](docs/guide.md#add-a-source-server).
+Open http://localhost:8080 (or `http://<server>:8080`), enter the setup code and create your admin account. Then add your TypeSafe API key under **Settings** to turn on triage. This host's own journal is collected immediately; to add more servers, see [Add a source server](docs/guide.md#add-a-source-server) (servers without Docker: [native install](docs/guide.md#source-server-without-docker)).
 
 ## Features
 
