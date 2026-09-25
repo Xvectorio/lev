@@ -65,8 +65,9 @@ def consolidate(conn):
         conn.execute("""INSERT INTO incidents(id,labels,pattern,first_ns,last_ns,saved_evidence)
             VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""", (target, Jsonb(item['labels']), pattern[:8000],
             item['first_ns'], item['last_ns'], Jsonb(item['saved_evidence'])))
-        conn.execute("""UPDATE incidents SET occurrences=occurrences+%s,first_ns=least(first_ns,%s),
-            last_ns=greatest(last_ns,%s) WHERE id=%s""", (item['occurrences'], item['first_ns'], item['last_ns'], target))
+        conn.execute(f"""UPDATE incidents SET occurrences=occurrences+%s,first_ns=least(first_ns,%s),
+            last_ns=greatest(last_ns,%s),level={WORST_LEVEL} WHERE id=%s""",
+                     (item['occurrences'], item['first_ns'], item['last_ns'], item['level'], item['level'], target))
         conn.execute('UPDATE incidents SET superseded_by=%s WHERE id=%s', (target, item['id']))
         conn.execute("INSERT INTO audit(incident_id,actor,action,data) VALUES (%s,'system','consolidated',%s)",
                      (item['id'], Jsonb({'into': target})))
@@ -78,6 +79,10 @@ def consolidate(conn):
         SELECT encode(sha256(('unversioned:'||id)::bytea),'hex'),id,generation,jsonb_build_object('examples',saved_evidence)
         FROM incidents WHERE superseded_by IS NULL AND status='review' AND triage IS NOT NULL
         AND NOT triage ? 'policy_version' ON CONFLICT DO NOTHING""")
+
+
+# Keeps the worse of the stored level and %s (warn < error < fatal).
+WORST_LEVEL = "CASE WHEN array_position(ARRAY['warn','error','fatal'],%s) > coalesce(array_position(ARRAY['warn','error','fatal'],level),0) THEN %s ELSE level END"
 
 
 def digest(value):
@@ -174,9 +179,9 @@ def ingest(conn, rows):
                     proposal=NULL,verification=NULL,verification_ns=NULL,resolved_ns=NULL,
                     triage=NULL,analyzed_at=NULL WHERE id=%s''', (incident_id,))
                 conn.execute("INSERT INTO audit(incident_id,actor,action) VALUES (%s,'collector','reopened')", (incident_id,))
-            conn.execute('''UPDATE incidents SET occurrences=occurrences+1,
-                first_ns=least(first_ns,%s), last_ns=greatest(last_ns,%s) WHERE id=%s''',
-                         (ts, ts, incident_id))
+            conn.execute(f'''UPDATE incidents SET occurrences=occurrences+1,
+                first_ns=least(first_ns,%s), last_ns=greatest(last_ns,%s), level={WORST_LEVEL} WHERE id=%s''',
+                         (ts, ts, row['level'], row['level'], incident_id))
             grouped.setdefault(incident_id, []).append(event_id)
     for incident_id, ids in grouped.items():
         item = conn.execute('SELECT * FROM incidents WHERE id=%s', (incident_id,)).fetchone()

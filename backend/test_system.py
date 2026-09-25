@@ -98,6 +98,9 @@ def run():
             assert job['status'] == 'pending' and job['attempts'] == 1
             second = {**rows[0], 'ts_ns': str(ts+2)}
             assert worker.ingest(conn, [second]) == 1
+            assert conn.execute('SELECT level FROM incidents').fetchone()['level'] == 'error'
+            worst = lambda old, new: conn.execute(f'SELECT {core.WORST_LEVEL} AS l FROM (VALUES (%s)) v(level)', (new, new, old)).fetchone()['l']
+            assert (worst('error', 'warn'), worst('error', 'fatal'), worst(None, 'warn')) == ('error', 'fatal', 'warn')
             assert conn.execute('SELECT count(*) AS n FROM jobs').fetchone()['n'] == 1
             conn.execute("UPDATE jobs SET next_attempt=now()")
         with patch.object(worker, 'complete_logs', return_value=[]):

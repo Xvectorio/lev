@@ -4,7 +4,7 @@
   import Help from './Help.svelte';
   type Labels = { host: string; server_id: string; project_id: string; service: string; environment: string };
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
-  type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
+  type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; level: string | null; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
   type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string}}[]; label: {route: string; category: string | null; actor: string; at: string} | null };
   type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; retention_h: number; backup_retention_days: number; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
   type Source = { project_id: string; server_id: string; host: string; environment: string; services: Record<string, number>; events_24h: number; last_heartbeat_ns: string | null };
@@ -938,7 +938,7 @@
           {#each incidents as item}
             <div class="incident-item">
               <button class="incident" class:selected={selected?.id === item.id} onclick={(e) => openFromList(item.id, e.currentTarget)}>
-                <div class="incident-meta"><span>{item.labels.service}</span><span>{item.occurrences.toLocaleString()} occurrences</span></div>
+                <div class="incident-meta"><span>{#if item.level}<span class="severity {item.level}">{item.level}</span> {/if}{item.labels.service}</span><span>{item.occurrences.toLocaleString()} occurrences</span></div>
                 <h2>{item.summary || item.pattern.slice(0, 150)}</h2>
                 <p>Project {item.labels.project_id} · Server {item.labels.server_id} · {item.labels.environment}</p>
                 <div class="incident-meta"><span class="analysis-tag">{item.status} · {item.category}</span><time>{time(item.last_ns)}</time></div>
@@ -953,7 +953,7 @@
             <div class="panel-heading"><h2>Incident workspace</h2><button aria-label="Close incident details" onclick={() => {selected = null; detailTop = 0;}}>✕</button></div>
             <div class="detail-body">
               <p class="incident-meta">Project {selected.labels.project_id} / Server {selected.labels.server_id} · {selected.labels.service}</p>
-              <h2>{selected.summary || selected.pattern.slice(0,180)}</h2><p class="stage-label">{selected.status} · {selected.category} · episode {selected.generation}</p>
+              <h2>{selected.summary || selected.pattern.slice(0,180)}</h2>{#if selected.level}<span class="severity {selected.level}">{selected.level}</span> {/if}<p class="stage-label">{selected.status} · {selected.category} · episode {selected.generation}</p>
               <p>{selected.occurrences.toLocaleString()} occurrences since {time(selected.first_ns)}</p>
               <div class="task-actions"><button title="Copies this incident as a JSON agent task (evidence, triage, suggested checks, permissions). Paste it into any AI agent or save it as a file." onclick={() => copyAgentTask(selected!.id)}>Copy agent task</button><button title="Copies a Claude Code command that asks an agent to inspect this incident with the lev-agent skill. Paste it in a terminal at the Lev repo root." onclick={() => copyAgentCommand(`Use the lev-agent skill to inspect Lev incident ${selected!.id}.`)}>Copy agent command</button><button class="primary" onclick={analyze} disabled={queuing || selected.status==='resolved'}>{queuing ? 'Queuing…' : 'Triage again'}</button></div>
               {#if DISMISSABLE.includes(selected.status)}<details class="dismiss"><summary>Dismiss as noise</summary><form onsubmit={(e) => {e.preventDefault(); dismissIncident(selected!, dismissReason);}}><label>Reason (optional)<textarea bind:value={dismissReason} maxlength="10000" placeholder="Human operator decision"></textarea></label><button type="submit">Move to observing</button></form></details>{/if}

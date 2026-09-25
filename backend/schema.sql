@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE INDEX IF NOT EXISTS audit_incident ON audit(incident_id,id DESC);
 
 ALTER TABLE incidents ADD COLUMN IF NOT EXISTS superseded_by text;
+-- Worst level seen: warn < error < fatal. NULL until an event arrives after this column existed.
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS level text;
 CREATE TABLE IF NOT EXISTS settings (
   name text PRIMARY KEY,
   value jsonb NOT NULL
