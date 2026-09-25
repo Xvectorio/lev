@@ -123,13 +123,14 @@ def logs(query, start, end, limit=500, direction='backward'):
 
 
 def complete_logs(query, start, end):
+    # Loki ranges are [start, end): the halves share `middle` as one's end and the other's start.
     rows = logs(query, start, end, 5000, 'forward')
     if len(rows) < 5000:
         return rows
-    if start >= end:
+    if end - start <= 1:
         raise RuntimeError('Over 4999 logs at one nanosecond; checkpoint held, split by service')
     middle = (start + end) // 2
-    return complete_logs(query, start, middle) + complete_logs(query, middle + 1, end)
+    return complete_logs(query, start, middle) + complete_logs(query, middle, end)
 
 
 def fingerprint(row):

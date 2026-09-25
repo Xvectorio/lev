@@ -204,9 +204,10 @@
     queuing = true; error = '';
     // Reuse the key after a failed response so a retry cannot create another job.
     const key = 'analysis-request-' + selected.id;
-    let requestId = sessionStorage.getItem(key) || crypto.randomUUID();
-    sessionStorage.setItem(key, requestId);
     try {
+      // getRandomValues, not randomUUID: the latter is missing on plain-HTTP (non-localhost) deployments.
+      const requestId = sessionStorage.getItem(key) || Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+      sessionStorage.setItem(key, requestId);
       await api('/analyze', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Lev-Request': '1'},
         body: JSON.stringify({incident_id: selected.id, request_id: requestId})});
       sessionStorage.removeItem(key);
@@ -430,10 +431,16 @@
     catch (e) { error = (e as Error).message; }
   }
   async function saveThresholds() {
-    if (!draft) editDraft();
-    if (!draft) return;
-    draft.thresholds = {...gates}; draft.note = draft.note || `Gates ${gates.investigate} / ${gates.observe} from the tune wizard`;
-    await savePolicy();
+    // Only the gates change: built from the active version, so unsaved draft edits are not activated with them.
+    if (!activePolicy) return;
+    error = '';
+    try {
+      const {id} = await api('/jev/policy', {method: 'POST', headers: POST, body: JSON.stringify({activate: true,
+        config: {...activePolicy.config, thresholds: {...gates}}, note: `Gates ${gates.investigate} / ${gates.observe} from the tune wizard`})});
+      if (draft) draft.thresholds = {...gates};
+      notice = `Policy ${id} saved and active with the new gates. Any draft edits stay unsaved.`;
+      replayId = id; await loadPolicies(); await loadInsight(); await refreshStatus();
+    } catch (e) { error = (e as Error).message; }
   }
   async function saveLabel(id: string, route: string | null, category = '') {
     error = '';

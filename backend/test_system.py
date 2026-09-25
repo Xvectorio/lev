@@ -45,6 +45,17 @@ def run():
         assert key('time="2026-09-24T14:46:39.46+02:00" level=warning msg="healthcheck failed" actualDuration="866.1µs" container=8ae0fa149364c2f2') == \
             key('time="2026-09-24T14:49:44.09+02:00" level=warning msg="healthcheck failed" actualDuration="335.5µs" container=0123456789abcdef')
         assert key('lookup failed for DNS') != key('lookup failed for TCP')
+        # Saturated ranges split on Loki's [start, end) boundaries without skipping the midpoint.
+        stored = [5] * 4000 + [10] * 3000
+        fake = lambda query, start, end, limit, direction: [{'ts_ns': t} for t in stored if start <= t < end][:limit]
+        with patch.object(core, 'logs', side_effect=fake):
+            assert len(core.complete_logs('q', 0, 20)) == 7000
+            stored = [10] * 5000
+            try:
+                core.complete_logs('q', 0, 20)
+                raise AssertionError('An unsplittable saturated nanosecond must hold the checkpoint')
+            except RuntimeError:
+                pass
         with core.db() as conn:
             old = {'host': 'fw-host', 'service': 'firewall'}
             for n, spt in enumerate(('1', '2')):
@@ -321,6 +332,18 @@ def run():
                 item = conn.execute('SELECT status,triage FROM incidents').fetchone()
                 assert item['status'] == 'review' and item['triage']['policy_version'] == 2, item['status']
             assert client.post('/api/jev/policy/1/activate', headers=admin).json() == {'id': 1, 'active': True}
+            # A retry keeps its classification's policy (2, not the now-active 1), and an explanation outage falls back.
+            client.post('/api/settings', headers=admin, json={'AI_MODEL': 'm1'})
+            with core.db() as conn:
+                conn.execute("UPDATE incidents SET status='new'")
+                conn.execute('''UPDATE jobs SET status='pending',next_attempt=now() WHERE id=(SELECT id FROM jobs
+                    WHERE result->'triage'->>'policy_version'='2' ORDER BY completed_at DESC LIMIT 1)''')
+            with patch.object(worker.httpx, 'post', side_effect=httpx.ConnectError('explanation offline')):
+                assert worker.analyze_one()
+            with core.db() as conn:
+                item = conn.execute('SELECT status,triage,summary FROM incidents').fetchone()
+                assert item['status'] == 'review' and item['triage']['policy_version'] == 2 and item['summary'], item
+                assert conn.execute("SELECT count(*) AS n FROM jobs WHERE status='done' AND error LIKE 'Explanation fell back%%'").fetchone()['n'] == 1
             assert client.get('/api/jev', headers=admin).json()['settings']['triage_confidence'] == .8
             assert client.get('/api/logs',headers=admin,params={'start':ts,'end':ts+49*3600*core.NS}).status_code == 422
             source = next(s for s in client.get('/api/sources',headers=admin).json()['sources'] if s['server_id'] == schema)

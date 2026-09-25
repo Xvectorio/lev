@@ -66,12 +66,15 @@ transforms:
       }
       # dockerd/BuildKit logs this when a finished build's client session closes: routine, not a failure.
       if match(msg, r'healthcheck failed.*only one connection allowed') { level = "info" }
-      # Retain IDs in the message body, never in Loki labels.
-      if exists(app.request_id) { msg = msg + " request_id=" + (to_string(app.request_id) ?? "") }
-      if exists(app.order_id) { msg = msg + " order_id=" + (to_string(app.order_id) ?? "") }
       # Whitelist output fields; redact before forwarding or disk buffering.
       msg = replace(msg, r'(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+', "Bearer [REDACTED]")
-      msg = replace(msg, r'(?i)(password|passwd|secret|token|api[_-]?key|authorization|cookie)["\s]*[:=]["\s]*[^\s,";}]+', "[REDACTED]")
+      # Header values (Basic/Digest credentials, every cookie) are redacted whole: quoted, or to end of line.
+      msg = replace(msg, r'(?i)\b(?:proxy-)?authorization["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\r\n]+)', "[REDACTED]")
+      msg = replace(msg, r'(?i)\b(?:set-)?cookie["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\r\n]+)', "[REDACTED]")
+      msg = replace(msg, r'(?i)(?:password|passwd|secret|token|api[_-]?key)["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s,;}"\']+)', "[REDACTED]")
+      # Retain IDs in the message body (after redaction, which may run to end of line), never in Loki labels.
+      if exists(app.request_id) { msg = msg + " request_id=" + (to_string(app.request_id) ?? "") }
+      if exists(app.order_id) { msg = msg + " order_id=" + (to_string(app.order_id) ?? "") }
       . = {"timestamp": event_time, "message": msg, "level": level, "host": "${VECTOR_HOST}", "server_id": "${VECTOR_SERVER_ID}", "project_id": "${VECTOR_PROJECT_ID}", "environment": "${VECTOR_ENVIRONMENT}", "service": service, "source": path, "process_id": to_string(._PID) ?? ""}
   multiline:
     type: reduce
@@ -84,9 +87,15 @@ transforms:
       message: concat_newline
       timestamp: discard
       level: discard
+  exceptions:
+    type: remap
+    inputs: [multiline]
+    source: |
+      # The reduce keeps the head line's level; an exception merged under an info head must not be dropped.
+      if (.level == "info" || .level == "debug") && match(string!(.message), r'(?m)^(?:Traceback|Caused by:|[A-Za-z.]+(?:Error|Exception):)') { .level = "error" }
   relevant:
     type: filter
-    inputs: [multiline]
+    inputs: [exceptions]
     condition: '(.level == "warn" || .level == "error" || .level == "fatal") || .service == "lev-heartbeat"'
 sinks:
   loki:
@@ -174,6 +183,53 @@ tests:
             source: |
               assert_eq!(.message, "ERROR request failed\n  at example.py:10")
               assert_eq!(.level, "error")
+  - name: exception under an informational head is kept as an error
+    inputs:
+      - insert_at: multiline
+        type: log
+        log_fields:
+          host: test-host
+          service: app
+          source: fixture
+          level: info
+          message: Starting request
+      - insert_at: multiline
+        type: log
+        log_fields:
+          host: test-host
+          service: app
+          source: fixture
+          level: info
+          message: 'ValueError: bad input'
+    outputs:
+      - extract_from: relevant
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "Starting request\nValueError: bad input")
+              assert_eq!(.level, "error")
+  - name: redact whole header values and quoted credentials
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR login failed Authorization: Basic dXNlcjpodW50ZXIy'
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR bad session Cookie: theme=dark; session=abc123secret'
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR auth failed password="correct horse battery" user=bob'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(!contains(m, "dXNlcjpodW50ZXIy") && !contains(m, "abc123secret") && !contains(m, "horse") && !contains(m, "battery"), m)
+              assert!(contains(m, "failed") || contains(m, "bad session"))
 
   - name: forward warnings through the final filter
     inputs:

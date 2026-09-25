@@ -11,7 +11,7 @@ Vector on each server reads logs, normalizes and redacts them, and pushes **warn
 
 ## Compatibility contract (never break)
 
-- `vector.yaml` is **shared and identical on every server**. Don't edit it per server. Its `normalize` → `multiline` → `relevant` → `loki` chain sets the labels (`project_id, server_id, host, service, environment`), severity, redaction and heartbeat that Lev depends on. Resolution of incidents needs the heartbeat.
+- `vector.yaml` is **shared and identical on every server**. Don't edit it per server. Its `normalize` → `multiline` → `exceptions` → `relevant` → `loki` chain sets the labels (`project_id, server_id, host, service, environment`), severity, redaction and heartbeat that Lev depends on. Resolution of incidents needs the heartbeat.
 - Per-server additions go **only** in `watch.d/<thing>.yaml` plus read-only volume mounts in the compose file. `normalize` takes input from `"watch_*"`, so a `watch_<thing>` transform is picked up automatically.
 - In a watch file, name the source `src_<thing>` (never `watch_…`, or it would be ingested twice) and the remap `watch_<thing>`. The remap may set only:
   - `.lev_service`: the service label. Keep it short and stable: `nginx`, `payments-api`.
