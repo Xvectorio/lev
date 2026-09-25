@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import QueryBar from './QueryBar.svelte';
   import Help from './Help.svelte';
   type Labels = { host: string; server_id: string; project_id: string; service: string; environment: string };
@@ -192,6 +192,13 @@
       selected = next;
     }
     catch (e) { error = (e as Error).message; }
+  }
+
+  // Line the workspace up with the clicked incident; measured after the grid gains its second column.
+  let detailTop = $state(0);
+  async function openFromList(id: string, el: HTMLElement) {
+    await openIncident(id); await tick();
+    detailTop = el.getBoundingClientRect().top - el.closest('.investigation')!.getBoundingClientRect().top;
   }
 
   function evidenceUrl(row: Log) {
@@ -514,7 +521,7 @@
   const reload = () => view === 'logs' ? search() : view === 'sources' ? loadSources() : view === 'jev' ? loadJevTab() : view === 'settings' ? loadSettings().catch(e => error = (e as Error).message) : loadIncidents();
 
   async function switchView(next: typeof view) {
-    view = next; selected = null; notice = '';
+    view = next; selected = null; detailTop = 0; notice = '';
     await reload();
   }
 
@@ -930,7 +937,7 @@
         <section class="incident-list" aria-label="Incidents">
           {#each incidents as item}
             <div class="incident-item">
-              <button class="incident" class:selected={selected?.id === item.id} onclick={() => openIncident(item.id)}>
+              <button class="incident" class:selected={selected?.id === item.id} onclick={(e) => openFromList(item.id, e.currentTarget)}>
                 <div class="incident-meta"><span>{item.labels.service}</span><span>{item.occurrences.toLocaleString()} occurrences</span></div>
                 <h2>{item.summary || item.pattern.slice(0, 150)}</h2>
                 <p>Project {item.labels.project_id} · Server {item.labels.server_id} · {item.labels.environment}</p>
@@ -942,8 +949,8 @@
           <div class="pagination"><button disabled={problemOffset===0} onclick={()=>{problemOffset=Math.max(0,problemOffset-100);loadIncidents();}}>Previous</button><span>Page {problemOffset/100+1}</span><button disabled={incidents.length<100} onclick={()=>{problemOffset+=100;loadIncidents();}}>Next</button></div>
         </section>
         {#if selected}
-          <section class="detail" aria-label="Incident details">
-            <div class="panel-heading"><h2>Incident workspace</h2><button aria-label="Close incident details" onclick={() => selected = null}>✕</button></div>
+          <section class="detail" aria-label="Incident details" style:margin-top="{detailTop}px">
+            <div class="panel-heading"><h2>Incident workspace</h2><button aria-label="Close incident details" onclick={() => {selected = null; detailTop = 0;}}>✕</button></div>
             <div class="detail-body">
               <p class="incident-meta">Project {selected.labels.project_id} / Server {selected.labels.server_id} · {selected.labels.service}</p>
               <h2>{selected.summary || selected.pattern.slice(0,180)}</h2><p class="stage-label">{selected.status} · {selected.category} · episode {selected.generation}</p>
