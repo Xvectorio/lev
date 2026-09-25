@@ -174,6 +174,9 @@
     const params = new URLSearchParams({ text, service: filters.service ?? '', host: filters.host ?? '', server_id: filters.server_id ?? '',
       project_id: filters.project_id ?? '', environment: filters.environment ?? '', severity: filters.level ?? severity,
       start: range?.start ?? String(end - BigInt(minutes) * 60n * 1000000000n), end: range?.end ?? String(end) });
+    // start() reads filters from the URL, so keep it in step or a reload brings removed chips back.
+    const shown = new URLSearchParams(Object.entries({...filters, ...range}).filter(([, v]) => v) as [string, string][]);
+    history.replaceState(null, '', shown.size ? '?' + shown : location.pathname);
     try {
       const result = await api('/logs?' + params, {signal: controller.signal});
       rows = result.rows; limited = result.limited;
