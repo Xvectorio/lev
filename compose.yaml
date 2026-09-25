@@ -16,6 +16,7 @@ x-backend-env: &backend-env
   TRIAGE_CONFIDENCE: ${TRIAGE_CONFIDENCE:-0.8}
   OBSERVE_CONFIDENCE: ${OBSERVE_CONFIDENCE:-0.6}
   LOG_RETENTION_HOURS: ${LOG_RETENTION_HOURS:-48}
+  BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
 services:
   init:
     image: ghcr.io/jelcke/lev-edge:${LEV_VERSION:-latest}
