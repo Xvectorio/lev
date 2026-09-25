@@ -337,20 +337,78 @@
     if (!what) gates = {...insightData!.active_thresholds};
     for (const item of insightData!.to_label) verdicts[item.id] ??= {route: '', category: item.category.choice, example: false};
   }
-  async function savePolicy(activate = true) {
-    if (!draft) return;
-    error = '';
-    const d = draft;
-    const config: PolicyConfig = {model: d.model.trim(), thresholds: d.thresholds, instructions: d.instructions,
+  function draftConfig(): PolicyConfig {
+    const d = draft!;
+    return {model: d.model.trim(), thresholds: d.thresholds, instructions: d.instructions,
       categories: Object.fromEntries(d.categories.map(r => [r.name.trim(), fromRow(r)])),
       actionability: Object.fromEntries(d.actionability.map(r => [r.name, fromRow(r)])),
       checks: Object.fromEntries(d.categories.map(r => [r.name.trim(), lines(r.checks)]))};
+  }
+  async function savePolicy(activate = true) {
+    if (!draft) return;
+    error = '';
     try {
-      const {id} = await api('/jev/policy', {method: 'POST', headers: POST, body: JSON.stringify({config, note: d.note, activate})});
-      notice = `Policy ${id} saved${activate ? ' and active. New triage uses it; use Triage again to re-judge existing incidents' : ''}.`;
-      draft = null; await loadPolicies(); await loadInsight(); await refreshStatus();
+      const {id} = await api('/jev/policy', {method: 'POST', headers: POST, body: JSON.stringify({config: draftConfig(), note: draft.note, activate})});
+      notice = activate ? `Policy ${id} saved and active. New triage uses it; use Triage again to re-judge existing incidents.`
+        : `Policy ${id} saved, not active. Test it in the Tune wizard (step 5) before activating.`;
+      draft = null; aiSuggestions = []; replayId = id; await loadPolicies(); await loadInsight(); await refreshStatus();
     } catch (e) { error = (e as Error).message; }
   }
+  // AI wording suggestions (Settings AI model): accepted per field into the draft, never saved automatically.
+  let aiSuggestions = $state<{field: string; value: Criterion; reason: string}[]>([]), aiBusy = $state(false);
+  const criterionText = (c: Criterion) => typeof c === 'string' ? c
+    : [c.what, c.not_for && 'Not for: ' + c.not_for, Array.isArray(c.examples) && c.examples.length && 'Examples: ' + c.examples.join(' · ')].filter(Boolean).join('\n');
+  function currentText(field: string) {
+    const [group, name] = field.split('.');
+    if (!draft) return '';
+    if (group === 'instructions') return draft.instructions[name as keyof PolicyConfig['instructions']];
+    const row = (group === 'categories' ? draft.categories : draft.actionability).find(r => r.name === name);
+    return row ? criterionText(fromRow(row)) : '';
+  }
+  async function suggestAI() {
+    if (!draft) return;
+    aiBusy = true; error = '';
+    try {
+      const r = await api('/jev/suggest', {method: 'POST', headers: POST, body: JSON.stringify(draftConfig())});
+      aiSuggestions = r.suggestions;
+      notice = !r.cases ? 'Nothing to learn from yet: no verdict disagrees with Jev. Give verdicts in the Tune wizard first.'
+        : `${r.suggestions.length} suggestion${r.suggestions.length === 1 ? '' : 's'} from ${r.cases} misjudged incident${r.cases === 1 ? '' : 's'}. Accepted ones go into the draft.`;
+    } catch (e) { error = (e as Error).message; }
+    finally { aiBusy = false; }
+  }
+  function applySuggestion(i: number) {
+    const s = aiSuggestions[i], [group, name] = s.field.split('.');
+    if (!draft) return;
+    if (group === 'instructions') draft.instructions[name as keyof PolicyConfig['instructions']] = s.value as string;
+    else {
+      const row = (group === 'categories' ? draft.categories : draft.actionability).find(r => r.name === name);
+      if (row) Object.assign(row, {...toRows({[name]: s.value})[0], checks: row.checks});
+    }
+    aiSuggestions.splice(i, 1);
+  }
+  // Replay: judge a saved version on labelled evidence and compare with the active one.
+  type Judged = {stage: string; action: Answer; category: Answer} | null;
+  type Score = {labelled: number; confusion: Record<string, Record<string, number>>; route_accuracy: number | null; false_ready: number; missed_ready: number; category_accuracy: number | null};
+  type ReplayResult = {policy_id: number; against: number; progress: {total: number; done: number; errors: number}; draft: Score; base: Score; base_source: Record<string, number>; cases: {incident_id: string; title: string; labels: Labels; label_route: string; label_category: string | null; draft: Judged; base: Judged; error: string | null; done: boolean}[]};
+  let replayId = $state<number | null>(null), replayData = $state<ReplayResult | null>(null), replayLimit = $state(50), replayBusy = $state(false);
+  let replayTimer: ReturnType<typeof setTimeout> | undefined;
+  async function loadReplay() {
+    clearTimeout(replayTimer);
+    if (replayId == null) return;
+    try { replayData = await api(`/jev/policy/${replayId}/replay`); } catch (e) { error = (e as Error).message; return; }
+    if (replayData!.progress.done < replayData!.progress.total && view === 'jev' && jevTab === 'tune') replayTimer = setTimeout(loadReplay, 4000);
+  }
+  async function startReplay() {
+    if (replayId == null) return;
+    replayBusy = true; error = '';
+    try {
+      const {queued} = await api(`/jev/policy/${replayId}/replay`, {method: 'POST', headers: POST, body: JSON.stringify({limit: replayLimit, include_active: true})});
+      notice = `${queued} Jev call${queued === 1 ? '' : 's'} queued. They run when no live triage is waiting.`;
+      await loadReplay();
+    } catch (e) { error = (e as Error).message; }
+    finally { replayBusy = false; }
+  }
+  const differs = (c: ReplayResult['cases'][number]) => !!c.error || !!c.draft && !!c.base && (c.draft.stage !== c.base.stage || c.draft.category.choice !== c.base.category.choice);
   async function activatePolicy(id: number) {
     try { await api(`/jev/policy/${id}/activate`, {method: 'POST', headers: POST}); notice = `Policy ${id} is active.`; await loadPolicies(); await loadInsight(); await refreshStatus(); }
     catch (e) { error = (e as Error).message; }
@@ -385,7 +443,11 @@
     try {
       if (tab === 'overview') { await loadJev(); await loadInsight(); }
       else if (tab === 'policy') await loadPolicies();
-      else { await loadPolicies(); await loadInsight(); }
+      else {
+        await loadPolicies(); await loadInsight();
+        replayId ??= policies!.versions.find(p => p.id !== policies!.active)?.id ?? policies!.active;
+        await loadReplay();
+      }
     } catch (e) { error = (e as Error).message; }
   }
   let incidentVerdict = $state({route: '', category: ''});
@@ -622,7 +684,18 @@
               </div>
             {/each}
             <div class="policy-form"><label class="wide">Change note<input bind:value={d.note} maxlength="500" placeholder="Why this version"></label></div>
-            <div class="task-actions connect"><button class="primary" onclick={() => savePolicy(true)}>Save and activate</button><button onclick={() => savePolicy(false)}>Save as inactive version</button><button onclick={() => editDraft()}>Discard changes</button></div>
+            <div class="task-actions connect"><button class="primary" onclick={() => savePolicy(true)}>Save and activate</button><button onclick={() => savePolicy(false)}>Save as inactive version</button><button onclick={() => editDraft()}>Discard changes</button>
+              <button onclick={suggestAI} disabled={aiBusy || !status?.explanations_configured} title={status?.explanations_configured ? 'Asks the AI model from Settings to reword categories and questions, based on incidents where your verdict and Jev disagree' : 'Set an AI model in Settings first'}>{aiBusy ? 'Asking the AI model…' : 'Suggest wording with AI'}</button></div>
+            {#if aiSuggestions.length}
+              <h3 class="policy-heading">AI suggestions <span class="muted">review each one; accepting changes the draft only. Save and test it in the Tune wizard before activating.</span></h3>
+              {#each aiSuggestions as s, i (s.field + i)}
+                <div class="suggestion">
+                  <p><b>{s.field}</b> <span class="muted">{s.reason}</span></p>
+                  <div class="suggestion-diff"><div><small>Now</small><pre>{currentText(s.field)}</pre></div><div><small>Suggested</small><pre>{criterionText(s.value)}</pre></div></div>
+                  <div class="task-actions"><button class="primary" onclick={() => applySuggestion(i)}>Accept into draft</button><button onclick={() => aiSuggestions.splice(i, 1)}>Ignore</button></div>
+                </div>
+              {/each}
+            {/if}
           </section>
         {/if}
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Versions</h2><span>newest 50 · triage results record the version they used</span></div>
@@ -682,6 +755,39 @@
           <section class="log-panel admin-panel"><div class="panel-heading"><h2>4 · Sharpen the wording</h2></div>
             <p class="connect">When verdicts show categories being confused, say what each one is <em>not</em> for and add real log lines as examples. Gates can't fix that; better criteria can. Examples you ticked in step 2 are already in the draft.</p>
             <div class="task-actions connect"><button onclick={() => loadJevTab('policy')}>Open the policy editor</button></div>
+          </section>
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>5 · Test before activating</h2><span>re-judges your labelled incidents with a saved version · 1 Jev call per incident per version</span></div>
+            <div class="policy-form">
+              <label>Version to test<select bind:value={replayId} onchange={loadReplay}>{#each policies?.versions ?? [] as p}<option value={p.id}>{p.id}{p.id === policies?.active ? ' (active)' : ''} · {p.note || p.config.model}</option>{/each}</select></label>
+              <label>Labelled incidents (newest first)<input type="number" min="1" max="200" bind:value={replayLimit}></label>
+            </div>
+            <div class="task-actions connect"><button class="primary" disabled={replayBusy || replayId == null || !q.labelled} onclick={startReplay}>Run test: up to {Math.min(replayLimit, q.labelled) * (replayId === policies?.active ? 1 : 2)} Jev calls</button>
+              <span class="muted">{replayId === policies?.active ? 'Testing the active version.' : 'The active version is judged on the same evidence for a fair comparison.'} Already judged incidents aren't charged again.</span></div>
+            {#if replayData && replayData.progress.total}
+              {@const r = replayData}
+              <p class="connect">{r.progress.done} of {r.progress.total} judged{#if r.progress.errors} · <span class="severity error">{r.progress.errors} failed; run the test again to retry</span>{/if}{#if r.progress.done < r.progress.total} · updating…{/if}</p>
+              <div class="table-scroll"><table class="sources">
+                <thead><tr><th>Against your verdicts</th><th>Version {r.policy_id}</th><th>Version {r.against}{r.base_source.stored ? ' *' : ''}</th></tr></thead>
+                <tbody>
+                  <tr><td>Route accuracy</td><td>{pct(r.draft.route_accuracy)}</td><td>{pct(r.base.route_accuracy)}</td></tr>
+                  <tr><td>False ready</td><td>{r.draft.false_ready}</td><td>{r.base.false_ready}</td></tr>
+                  <tr><td>Missed ready</td><td>{r.draft.missed_ready}</td><td>{r.base.missed_ready}</td></tr>
+                  <tr><td>Category accuracy</td><td>{pct(r.draft.category_accuracy)}</td><td>{pct(r.base.category_accuracy)}</td></tr>
+                </tbody>
+              </table></div>
+              {#if r.base_source.stored}<p class="connect muted">* {r.base_source.stored} of these use the incident's live judgment instead of a replay, which may have had more surrounding context.</p>{/if}
+              {@const changed = r.cases.filter(differs)}
+              {#if changed.length}<div class="table-scroll"><table class="sources">
+                <thead><tr><th>Where they differ</th><th>Your verdict</th><th>Version {r.policy_id}</th><th>Version {r.against}</th></tr></thead>
+                <tbody>{#each changed as c}<tr>
+                  <td><button class="chip" onclick={async () => { await switchView('incidents'); openIncident(c.incident_id); }}>{c.labels.service} · {c.labels.server_id}</button><br><span class="muted">{c.title}</span></td>
+                  <td>{c.label_route}{#if c.label_category}<br><span class="muted">{c.label_category}</span>{/if}</td>
+                  <td class:agree={c.draft?.stage === c.label_route}>{#if c.error}<span class="severity error">{c.error}</span>{:else if c.draft}{c.draft.stage} <span class="muted">{c.draft.action.choice} {pct(c.draft.action.confidence)}</span><br><span class="muted">{c.draft.category.choice}</span>{/if}</td>
+                  <td class:agree={c.base?.stage === c.label_route}>{#if c.base}{c.base.stage} <span class="muted">{c.base.action.choice} {pct(c.base.action.confidence)}</span><br><span class="muted">{c.base.category.choice}</span>{/if}</td>
+                </tr>{/each}</tbody>
+              </table></div>{:else if r.progress.done === r.progress.total}<p class="connect muted">Both versions route and categorise every tested incident the same way.</p>{/if}
+              {#if r.policy_id !== policies?.active && r.progress.done === r.progress.total}<div class="task-actions connect"><button class="primary" onclick={() => activatePolicy(r.policy_id)}>Activate version {r.policy_id}</button></div>{/if}
+            {:else if !q.labelled}<p class="connect muted">Give verdicts in step 2 first; the test measures versions against them.</p>{/if}
           </section>
         {/if}
       {:else if jevData}
@@ -783,7 +889,7 @@
               <p class="incident-meta">Project {selected.labels.project_id} / Server {selected.labels.server_id} · {selected.labels.service}</p>
               <h2>{selected.summary || selected.pattern.slice(0,180)}</h2><p class="stage-label">{selected.status} · {selected.category} · episode {selected.generation}</p>
               <p>{selected.occurrences.toLocaleString()} occurrences since {time(selected.first_ns)}</p>
-              <div class="task-actions"><button onclick={() => copyAgentTask(selected!.id)}>Copy agent task</button><button title="Copies a Claude Code command that asks an agent to inspect this incident with the lev-agent skill. Paste it in a terminal at the Lev repo root." onclick={() => copyAgentCommand(`Use the lev-agent skill to inspect Lev incident ${selected!.id}.`)}>AI agent</button><button class="primary" onclick={analyze} disabled={queuing || selected.status==='resolved'}>{queuing ? 'Queuing…' : 'Triage again'}</button></div>
+              <div class="task-actions"><button title="Copies this incident as a JSON agent task (evidence, triage, suggested checks, permissions). Paste it into any AI agent or save it as a file." onclick={() => copyAgentTask(selected!.id)}>Copy agent task</button><button title="Copies a Claude Code command that asks an agent to inspect this incident with the lev-agent skill. Paste it in a terminal at the Lev repo root." onclick={() => copyAgentCommand(`Use the lev-agent skill to inspect Lev incident ${selected!.id}.`)}>AI agent</button><button class="primary" onclick={analyze} disabled={queuing || selected.status==='resolved'}>{queuing ? 'Queuing…' : 'Triage again'}</button></div>
               {#if DISMISSABLE.includes(selected.status)}<details class="dismiss"><summary>Dismiss as noise</summary><form onsubmit={(e) => {e.preventDefault(); dismissIncident(selected!, dismissReason);}}><label>Reason (optional)<textarea bind:value={dismissReason} maxlength="10000" placeholder="Human operator decision"></textarea></label><button type="submit">Move to observing</button></form></details>{/if}
               {#if selected.triage}<p class="triage-info">Jev: {selected.triage.answers.actionability.choice} · {Math.round(selected.triage.answers.category.confidence*100)}% category confidence<br><small>{selected.triage.model}</small></p>
                 <details class="dismiss" open={!!selected.label}><summary>{selected.label ? `Your verdict: ${selected.label.route}${selected.label.category ? ' · ' + selected.label.category : ''}` : 'Was Jev right? Give a verdict'}</summary>

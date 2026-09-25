@@ -88,3 +88,13 @@ CREATE TABLE IF NOT EXISTS labels (
   at timestamptz NOT NULL DEFAULT now(),
   evidence jsonb NOT NULL
 );
+CREATE TABLE IF NOT EXISTS replays (
+  policy_id integer NOT NULL REFERENCES policies(id),
+  incident_id text NOT NULL REFERENCES incidents(id),
+  attempt integer NOT NULL DEFAULT 1,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  result jsonb,
+  error text,
+  PRIMARY KEY (policy_id, incident_id)
+);

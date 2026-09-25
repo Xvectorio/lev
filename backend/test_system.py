@@ -197,6 +197,41 @@ def run():
             assert loose['category_accuracy'] == 1 and loose['labelled'] == 1 and not loose['to_label']
             assert client.post(label_route, headers=admin, json={'route': None}).status_code == 200
             assert client.get('/api/jev/insight', headers=admin, params={'investigate': .9}).json()['to_label'][0]['id'] == incident_id
+
+            # Replay: a version is judged on labelled evidence only when no triage is due; incidents stay untouched.
+            assert client.post(label_route, headers=admin, json={'route': 'observing', 'category': 'database'}).status_code == 200
+            assert client.post('/api/jev/policy/2/replay', headers=admin, json={'include_active': False}).json() == {'queued': 1}
+            with core.db() as conn:
+                before = conn.execute('SELECT status,triage FROM incidents').fetchone()
+                conn.execute("UPDATE jobs SET status='pending',next_attempt=now()")
+            assert not worker.replay_one(), 'Replay must yield to real triage'
+            with core.db() as conn:
+                conn.execute("UPDATE jobs SET status='done'")
+            with patch.object(worker.httpx, 'post', side_effect=provider):
+                assert worker.replay_one() and not worker.replay_one()
+            assert calls[-1]['model'] == 'jev-tuned' and calls[-1]['state']['evidence']['examples']
+            with core.db() as conn:
+                assert conn.execute('SELECT status,triage FROM incidents').fetchone() == before
+            compared = client.get('/api/jev/policy/2/replay', headers=admin, params={'against': 1}).json()
+            assert compared['progress'] == {'total': 1, 'done': 1, 'errors': 0} and compared['base_source'] == {'stored': 1}, compared
+            assert compared['draft']['confusion'] == {'observing': {'review': 1}} and compared['base']['false_ready'] == 1, compared
+
+            # AI suggestions use the Settings model, and only valid edits that keep the injection guard survive.
+            draft_config = client.get('/api/jev/policy', headers=admin).json()['versions'][0]['config']
+            assert client.post('/api/jev/suggest', headers=admin, json=draft_config).status_code == 422, 'Needs an AI model'
+            client.post('/api/settings', headers=admin, json={'AI_MODEL': 'm1'})
+            def ai(url, **kwargs):
+                assert url.endswith('/chat/completions') and kwargs['json']['model'] == 'm1'
+                assert json.loads(kwargs['json']['messages'][1]['content'])['misjudged'][0]['expected_route'] == 'observing'
+                content = json.dumps({'suggestions': [
+                    {'field': 'categories.database', 'value': {'what': 'Database failures', 'not_for': 'Network', 'examples': ['connection refused']}, 'reason': 'r'},
+                    {'field': 'categories.madeup', 'value': 'x', 'reason': 'unknown option'},
+                    {'field': 'instructions.category', 'value': 'Categorize everything quickly.', 'reason': 'drops the guard'}]})
+                return httpx.Response(200, request=httpx.Request('POST', url), json={'choices': [{'message': {'content': content}}]})
+            with patch.object(worker.httpx, 'post', side_effect=ai):
+                suggested = client.post('/api/jev/suggest', headers=admin, json=draft_config).json()
+            assert suggested['cases'] == 1 and [s['field'] for s in suggested['suggestions']] == ['categories.database'], suggested
+            client.post('/api/settings', headers=admin, json={'AI_MODEL': ''})
             with core.db() as conn:
                 conn.execute('UPDATE incidents SET labels=labels||%s', (Jsonb({'project_id':'lev-test','host':schema}),))
             problem_list = client.get('/api/incidents?samples=true', headers=admin)
