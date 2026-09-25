@@ -675,7 +675,7 @@
         <div class="task-actions connect"><button onclick={() => dataAction('/testdata')} disabled={dataBusy}>{dataBusy ? 'Working…' : 'Load test data'}</button></div>
         <div class="alert connect danger-zone">
           <div><strong>⚠ Danger: delete all data.</strong> Permanently removes every incident, triage result, verdict, proposal, audit entry and every log in Loki, real ones included. Logs that arrive afterwards start fresh. Users, settings and policy versions are kept. There is no undo; only a backup restores it.</div>
-          <label>Type <code>{WIPE_PHRASE}</code> to confirm<input autocomplete="off" spellcheck="false" bind:value={wipeText}></label>
+          <label><span>Type <code>{WIPE_PHRASE}</code> to confirm</span><input autocomplete="off" spellcheck="false" bind:value={wipeText}></label>
           <button class="danger" onclick={() => dataAction('/wipe')} disabled={dataBusy || wipeText !== WIPE_PHRASE}>Delete all data</button>
         </div>
       </section>

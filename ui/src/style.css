@@ -117,3 +117,11 @@ td.agree{font-weight:700;color:#176b69}
 .brand{font-weight:700;letter-spacing:2px}.brand .brand-mark,.sidebar .brand .brand-mark{display:block;background:none;width:auto;height:1.15em;border-radius:0}
 .brand-sub{font-size:10px;font-weight:600;letter-spacing:2px;color:var(--muted);margin:-10px 0 0}
 .sidebar .brand-sub{margin:2px 0 0;color:#b6c9dc}
+/* Danger zone: neutral card with a red accent; red only on the heading, phrase and button. */
+.alert.danger-zone,[data-theme="dark"] .alert.danger-zone{background:white;color:var(--navy);border:1px solid var(--red);border-left:5px solid var(--red);gap:14px}
+[data-theme="dark"] .alert.danger-zone{background:#1b2a32}
+.danger-zone strong,.danger-zone code{color:var(--red)}.danger-zone code{font-weight:700;padding:1px 5px;border-radius:4px;background:color-mix(in srgb,var(--red) 12%,transparent)}
+.danger-zone label{max-width:420px;font-weight:600}
+.danger-zone button.danger,[data-theme="dark"] .danger-zone button.danger{background:var(--red);border-color:var(--red);color:white;opacity:1}
+[data-theme="dark"] .danger-zone button.danger{color:#111c22}
+.danger-zone button.danger:disabled,[data-theme="dark"] .danger-zone button.danger:disabled{background:transparent;color:var(--red);opacity:.55;cursor:not-allowed}
