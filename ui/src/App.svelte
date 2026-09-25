@@ -296,6 +296,53 @@
       await loadJev(); await refreshStatus();
     } catch (e) { error = (e as Error).message; }
   }
+  // Tooltip texts for the Jev view; one place so repeated labels explain themselves the same way.
+  const TIPS = {
+    tab_overview: 'What Jev is doing now: routing, confidence, the job queue and controls.',
+    tab_policy: 'Edit what Jev is asked: model, questions, categories, examples and gates. Every save is a new version you can roll back.',
+    tab_tune: 'Step by step: find where triage goes wrong, give verdicts, tune the gates, improve wording and test a version before activating it.',
+    ready_gate: 'Minimum confidence for an "investigate" judgment to become ready, so the agent picks it up. Lower means more incidents reach the agent, including more false alarms. Below the gate they go to review.',
+    observe_gate: 'Minimum confidence for an "observe" judgment to become observing (kept visible, no action). Lower hides more noise automatically, with more risk of hiding a real problem. Below the gate they go to review.',
+    near: 'Incidents whose confidence is within 0.1 of the gate for the option Jev picked. A small gate change flips these, so they are the most useful ones to give verdicts on.',
+    route_accuracy: 'Share of incidents with your verdict where Jev routed them where you said they belong (ready, observing or review).',
+    false_ready: 'Incidents Jev sent to the agent (ready) that you said should be observing or review. Each one costs agent time for nothing.',
+    missed_ready: 'Incidents you said need investigation (ready) that Jev routed to observing or review. These are real problems left waiting.',
+    category_accuracy: 'Share of verdicts with a category where Jev picked the same category as you.',
+    verdicts: 'A verdict is your answer to "where should this incident have gone?". Verdicts are the ground truth for every accuracy number and test here. They never change the incident itself.',
+    routed: {ready: 'Jev said investigate and was confident enough: the agent picks these up.', observing: 'Jev said observe (benign, expected or recovered) and was confident enough: kept visible, no action.', review: 'Jev was unsure, said unknown, or was below the gate: waits for a human.'} as Record<string, string>,
+    category_count: 'Incidents Jev put in this category. Many in "unknown" usually means the categories do not fit your logs yet.',
+    model: 'The TypeSafe model that answers the triage questions. Part of the policy, so a version change can switch models.',
+    policy: 'The active policy version. Every triage result records the version it was judged with.',
+    category_question: 'The instruction Jev gets for choosing a category. Keep the line that says log text is untrusted: it guards against instructions hidden in logs.',
+    actionability_question: 'The instruction Jev gets for deciding investigate, observe or unknown. This decides routing, so wording changes here matter most. Keep the untrusted-logs line.',
+    cat_name: 'Short identifier (lowercase, digits, _). Shown in the incident list and filters. "unknown" is required.',
+    cat_what: 'What belongs in this option. Jev compares incidents against these descriptions, so be concrete.',
+    cat_not_for: 'What looks similar but belongs elsewhere. The best fix when two options get confused.',
+    cat_examples: 'Typical log lines for this option, one per line. Keep them generic: no hostnames, IDs or secrets.',
+    cat_checks: 'Diagnostic steps the agent gets for incidents in this category, one per line.',
+    note: 'Why you made this version. Shown in the version list and the test picker.',
+    save_activate: 'Save as a new version and use it for all new triage right away. Existing incidents keep their judgment until "Triage again".',
+    save_inactive: 'Save as a new version without using it yet, so you can test it in the Tune wizard (step 5) first.',
+    discard: 'Throw away unsaved edits and start again from the active version.',
+    activate: 'Use this version for all new triage. Activating an older version is how you roll back.',
+    edit_copy: 'Load this version into the editor. Saving creates a new version; the original stays unchanged.',
+    weak: 'Incidents that ended up in review or in the unknown category, grouped by service. Big groups show where the policy fits your logs worst.',
+    jev_said: 'Where Jev routed it under the current gates, with its choices and confidence.',
+    should_route: 'Your verdict: where this incident should have gone. ready = needs investigation, observing = harmless or expected, review = genuinely needs a human to decide.',
+    add_example: 'Also add this incident\'s log line as an example to the chosen category in the draft policy. Review and save the draft under Policy.',
+    sliders: 'Try gates without spending anything: stored Jev answers are re-routed instantly. Numbers below update when you release the slider.',
+    would_route: 'How many triaged incidents would land here with the gates on the sliders.',
+    confusion: 'Rows are your verdicts, columns are where Jev would route with these gates. The bold diagonal is agreement; everything else is a mistake.',
+    save_gates: 'Save the slider values as a new policy version and activate it.',
+    replay_version: 'The saved version to test. Save a draft as an inactive version under Policy to test it here.',
+    replay_limit: 'How many of your most recent verdicts to test on. Each costs one Jev call per version tested.',
+    run_test: 'Re-judge your labelled incidents with this version, and with the active one on the same evidence for a fair comparison. Runs only when no live triage is waiting and never changes incidents.',
+    pause: 'Stop calling Jev. Logs are still collected and new incidents wait in the queue.',
+    retry: 'Queue failed jobs again, for example after fixing a key or URL in Settings. Stored Jev answers are reused.',
+    cancel: 'Drop every pending job. Those incidents stay untriaged until you use Triage again.',
+    jobs: 'Triage jobs in the last 24 hours by status. done = judged, failed = gave up after a provider error.',
+    judged: 'Jev\'s actionability choice in the last 24 hours, with its average confidence.',
+    queued: 'Waiting for Jev, oldest first. Jobs that failed wait longer before each retry.'};
   // Jev tuning: immutable policy versions, operator labels and threshold what-ifs over stored answers.
   type Criterion = string | Record<string, string | string[]>;
   type PolicyConfig = { model: string; thresholds: {investigate: number; observe: number}; instructions: {category: string; actionability: string}; categories: Record<string, Criterion>; actionability: Record<string, Criterion>; checks: Record<string, string[]> };
@@ -355,7 +402,7 @@
     } catch (e) { error = (e as Error).message; }
   }
   // AI wording suggestions (Settings AI model): accepted per field into the draft, never saved automatically.
-  let aiSuggestions = $state<{field: string; value: Criterion; reason: string}[]>([]), aiBusy = $state(false);
+  let aiSuggestions = $state<{field: string; value: Criterion; reason: string}[]>([]), aiBusy = $state(false), aiResult = $state('');
   const criterionText = (c: Criterion) => typeof c === 'string' ? c
     : [c.what, c.not_for && 'Not for: ' + c.not_for, Array.isArray(c.examples) && c.examples.length && 'Examples: ' + c.examples.join(' · ')].filter(Boolean).join('\n');
   function currentText(field: string) {
@@ -367,13 +414,16 @@
   }
   async function suggestAI() {
     if (!draft) return;
-    aiBusy = true; error = '';
+    aiBusy = true; error = ''; aiResult = '';
+    const n = (k: number, word: string) => `${k} ${word}${k === 1 ? '' : 's'}`;
     try {
       const r = await api('/jev/suggest', {method: 'POST', headers: POST, body: JSON.stringify(draftConfig())});
       aiSuggestions = r.suggestions;
-      notice = !r.cases ? 'Nothing to learn from yet: no verdict disagrees with Jev. Give verdicts in the Tune wizard first.'
-        : `${r.suggestions.length} suggestion${r.suggestions.length === 1 ? '' : 's'} from ${r.cases} misjudged incident${r.cases === 1 ? '' : 's'}. Accepted ones go into the draft.`;
-    } catch (e) { error = (e as Error).message; }
+      const basis = [r.misjudged && n(r.misjudged, 'incident') + ' where your verdict differs', r.uncertain && n(r.uncertain, 'incident') + ' Jev was unsure about'].filter(Boolean).join(' and ');
+      aiResult = !r.cases ? 'Nothing to learn from: no verdict disagrees with Jev and nothing is waiting in review. Give verdicts in the Tune wizard.'
+        : !r.suggestions.length ? `The AI model found nothing to improve, based on ${basis}.`
+        : `${n(r.suggestions.length, 'suggestion')} based on ${basis}. Review them below; accepted ones only change the draft.`;
+    } catch (e) { aiResult = 'Failed: ' + (e as Error).message; }
     finally { aiBusy = false; }
   }
   function applySuggestion(i: number) {
@@ -650,26 +700,26 @@
       </section>
     {:else if view === 'jev'}
       <div class="incident-toolbar"><p>Jev classifies each incident episode. Pausing stops provider calls only; collection continues and jobs wait.</p><button onclick={() => loadJevTab()} disabled={loading}>Refresh</button></div>
-      <div class="workflow tabs" role="tablist" aria-label="Jev sections">{#each [['overview','Overview'],['policy','Policy'],['tune','Tune wizard']] as [tab, name]}<button role="tab" aria-selected={jevTab === tab} class:chosen={jevTab === tab} onclick={() => loadJevTab(tab as typeof jevTab)}><span>{name}</span></button>{/each}</div>
+      <div class="workflow tabs" role="tablist" aria-label="Jev sections">{#each [['overview','Overview'],['policy','Policy'],['tune','Tune wizard']] as [tab, name]}<button role="tab" title={TIPS[('tab_' + tab) as keyof typeof TIPS] as string} aria-selected={jevTab === tab} class:chosen={jevTab === tab} onclick={() => loadJevTab(tab as typeof jevTab)}><span>{name}</span></button>{/each}</div>
       {#if jevTab === 'policy'}
         {#if draft}
           {@const d = draft}
           <section class="log-panel admin-panel"><div class="panel-heading"><h2>Draft policy</h2><span>copy of version {d.base} · saving creates a new version</span></div>
             <div class="policy-form">
-              <label>Jev model<input bind:value={d.model} maxlength="100"></label>
-              <label>Ready gate (investigate ≥)<input type="number" min="0" max="1" step="0.01" bind:value={d.thresholds.investigate}></label>
-              <label>Observe gate (observe ≥)<input type="number" min="0" max="1" step="0.01" bind:value={d.thresholds.observe}></label>
-              <label class="wide">Category question<textarea bind:value={d.instructions.category} maxlength="4000"></textarea></label>
-              <label class="wide">Actionability question<textarea bind:value={d.instructions.actionability} maxlength="4000"></textarea></label>
+              <label title={TIPS.model}>Jev model<input bind:value={d.model} maxlength="100"></label>
+              <label title={TIPS.ready_gate}>Ready gate (investigate ≥)<input type="number" min="0" max="1" step="0.01" bind:value={d.thresholds.investigate}></label>
+              <label title={TIPS.observe_gate}>Observe gate (observe ≥)<input type="number" min="0" max="1" step="0.01" bind:value={d.thresholds.observe}></label>
+              <label class="wide" title={TIPS.category_question}>Category question<textarea bind:value={d.instructions.category} maxlength="4000"></textarea></label>
+              <label class="wide" title={TIPS.actionability_question}>Actionability question<textarea bind:value={d.instructions.actionability} maxlength="4000"></textarea></label>
             </div>
             <h3 class="policy-heading">Categories <span class="muted">what it is, what it is not, example log lines (one per line), and the checks an agent gets</span></h3>
             {#each d.categories as row, i}
               <div class="policy-row">
-                <label>Name<input bind:value={row.name} pattern="[a-z][a-z0-9_]*" maxlength="40" disabled={row.name === 'unknown'}></label>
-                <label>Description<textarea bind:value={row.what}></textarea></label>
-                <label>Not for<textarea bind:value={row.not_for} placeholder="Optional: what to send elsewhere"></textarea></label>
-                <label>Examples<textarea bind:value={row.examples} placeholder="Optional: one log line per line"></textarea></label>
-                <label>Suggested checks<textarea bind:value={row.checks} placeholder="One per line"></textarea></label>
+                <label title={TIPS.cat_name}>Name<input bind:value={row.name} pattern="[a-z][a-z0-9_]*" maxlength="40" disabled={row.name === 'unknown'}></label>
+                <label title={TIPS.cat_what}>Description<textarea bind:value={row.what}></textarea></label>
+                <label title={TIPS.cat_not_for}>Not for<textarea bind:value={row.not_for} placeholder="Optional: what to send elsewhere"></textarea></label>
+                <label title={TIPS.cat_examples}>Examples<textarea bind:value={row.examples} placeholder="Optional: one log line per line"></textarea></label>
+                <label title={TIPS.cat_checks}>Suggested checks<textarea bind:value={row.checks} placeholder="One per line"></textarea></label>
                 {#if row.name !== 'unknown'}<button class="quick-dismiss" onclick={() => d.categories.splice(i, 1)}>Remove</button>{/if}
               </div>
             {/each}
@@ -678,14 +728,15 @@
             {#each d.actionability as row}
               <div class="policy-row">
                 <label>Option<input value={row.name} disabled></label>
-                <label>Description<textarea bind:value={row.what}></textarea></label>
-                <label>Not for<textarea bind:value={row.not_for} placeholder="Optional"></textarea></label>
-                <label>Examples<textarea bind:value={row.examples} placeholder="Optional: one per line"></textarea></label>
+                <label title={TIPS.cat_what}>Description<textarea bind:value={row.what}></textarea></label>
+                <label title={TIPS.cat_not_for}>Not for<textarea bind:value={row.not_for} placeholder="Optional"></textarea></label>
+                <label title={TIPS.cat_examples}>Examples<textarea bind:value={row.examples} placeholder="Optional: one per line"></textarea></label>
               </div>
             {/each}
-            <div class="policy-form"><label class="wide">Change note<input bind:value={d.note} maxlength="500" placeholder="Why this version"></label></div>
-            <div class="task-actions connect"><button class="primary" onclick={() => savePolicy(true)}>Save and activate</button><button onclick={() => savePolicy(false)}>Save as inactive version</button><button onclick={() => editDraft()}>Discard changes</button>
+            <div class="policy-form"><label class="wide" title={TIPS.note}>Change note<input bind:value={d.note} maxlength="500" placeholder="Why this version"></label></div>
+            <div class="task-actions connect"><button class="primary" title={TIPS.save_activate} onclick={() => savePolicy(true)}>Save and activate</button><button title={TIPS.save_inactive} onclick={() => savePolicy(false)}>Save as inactive version</button><button title={TIPS.discard} onclick={() => editDraft()}>Discard changes</button>
               <button onclick={suggestAI} disabled={aiBusy || !status?.explanations_configured} title={status?.explanations_configured ? 'Asks the AI model from Settings to reword categories and questions, based on incidents where your verdict and Jev disagree' : 'Set an AI model in Settings first'}>{aiBusy ? 'Asking the AI model…' : 'Suggest wording with AI'}</button></div>
+            {#if aiBusy || aiResult}<p class="connect ai-result" aria-live="polite">{aiBusy ? 'Collecting misjudged and uncertain incidents and asking the AI model. This can take up to a minute…' : aiResult}</p>{/if}
             {#if aiSuggestions.length}
               <h3 class="policy-heading">AI suggestions <span class="muted">review each one; accepting changes the draft only. Save and test it in the Tune wizard before activating.</span></h3>
               {#each aiSuggestions as s, i (s.field + i)}
@@ -700,57 +751,57 @@
         {/if}
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Versions</h2><span>newest 50 · triage results record the version they used</span></div>
           <div class="table-scroll"><table class="sources">
-            <thead><tr><th>Version</th><th>Note</th><th>Gates</th><th>Created</th><th></th></tr></thead>
+            <thead><tr><th>Version</th><th>Note</th><th title="Ready gate / observe gate of this version">Gates</th><th>Created</th><th></th></tr></thead>
             <tbody>{#each policies?.versions ?? [] as p}<tr>
               <td>{p.id}{#if p.id === policies?.active} <span class="source-state live">active</span>{/if}<br><span class="muted">{p.config.model} · {Object.keys(p.config.categories).length} categories</span></td>
               <td>{p.note || '—'}</td>
               <td>{p.config.thresholds.investigate} / {p.config.thresholds.observe}</td>
               <td>{new Date(p.created_at).toLocaleString()}<br><span class="muted">{p.author}</span></td>
-              <td><div class="task-actions">{#if p.id !== policies?.active}<button onclick={() => activatePolicy(p.id)}>Activate</button>{/if}<button onclick={() => editDraft(p)}>Edit a copy</button></div></td>
+              <td><div class="task-actions">{#if p.id !== policies?.active}<button title={TIPS.activate} onclick={() => activatePolicy(p.id)}>Activate</button>{/if}<button title={TIPS.edit_copy} onclick={() => editDraft(p)}>Edit a copy</button></div></td>
             </tr>{/each}</tbody>
           </table></div>
         </section>
       {:else if jevTab === 'tune'}
         {#if insightData}
           {@const q = insightData}
-          <section class="log-panel admin-panel"><div class="panel-heading"><h2>1 · Where triage hurts</h2><span>{q.labelled} of {q.triaged} triaged incidents have your verdict</span></div>
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>1 · Where triage hurts</h2><span title={TIPS.verdicts}>{q.labelled} of {q.triaged} triaged incidents have your verdict</span></div>
             <dl class="settings">
-              <div><dt>Route accuracy vs your verdicts</dt><dd>{pct(q.route_accuracy)}</dd></div>
-              <div><dt>False ready (agent sent needlessly)</dt><dd>{q.false_ready}</dd></div>
-              <div><dt>Missed ready (real problem not sent)</dt><dd>{q.missed_ready}</dd></div>
-              <div><dt>Category accuracy</dt><dd>{pct(q.category_accuracy)}</dd></div>
+              <div><dt title={TIPS.route_accuracy}>Route accuracy vs your verdicts</dt><dd>{pct(q.route_accuracy)}</dd></div>
+              <div><dt title={TIPS.false_ready}>False ready (agent sent needlessly)</dt><dd>{q.false_ready}</dd></div>
+              <div><dt title={TIPS.missed_ready}>Missed ready (real problem not sent)</dt><dd>{q.missed_ready}</dd></div>
+              <div><dt title={TIPS.category_accuracy}>Category accuracy</dt><dd>{pct(q.category_accuracy)}</dd></div>
             </dl>
-            {#if q.weak.length}<div class="table-scroll"><table class="sources"><thead><tr><th>Uncertain pile: service</th><th>Category</th><th>Jev leaned</th><th>Incidents</th></tr></thead>
+            {#if q.weak.length}<div class="table-scroll"><table class="sources"><thead><tr><th title={TIPS.weak}>Uncertain pile: service</th><th>Category</th><th title="The option Jev leaned towards, even though it was not confident enough">Jev leaned</th><th>Incidents</th></tr></thead>
               <tbody>{#each q.weak as w}<tr><td>{w.service}</td><td>{w.category}</td><td>{w.action}</td><td>{w.count}</td></tr>{/each}</tbody></table></div>{/if}
             {#if !q.labelled}<p class="connect muted">Give verdicts in step 2 first. Accuracy numbers need ground truth.</p>{/if}
           </section>
           <section class="log-panel admin-panel"><div class="panel-heading"><h2>2 · Give verdicts</h2><span>most informative first: dismissed, in review, or close to a gate</span></div>
             <div class="table-scroll"><table class="sources">
-              <thead><tr><th>Incident</th><th>Jev said</th><th>Should route to</th><th>Category</th><th></th></tr></thead>
+              <thead><tr><th>Incident</th><th title={TIPS.jev_said}>Jev said</th><th title={TIPS.should_route}>Should route to</th><th title="The category you think is right. Jev's pick is preselected.">Category</th><th></th></tr></thead>
               <tbody>{#each q.to_label as item (item.id)}
                 {@const v = verdicts[item.id]}
                 <tr>
                   <td><button class="chip" onclick={async () => { await switchView('incidents'); openIncident(item.id); }}>{item.labels.service} · {item.labels.server_id}</button>{#if item.dismissed} <span class="source-state stale">dismissed</span>{/if}<br><span class="muted">{item.title}</span></td>
                   <td>{item.stage}<br><span class="muted">{item.action.choice} {pct(item.action.confidence)} · {item.category.choice} {pct(item.category.confidence)}</span></td>
                   <td><select bind:value={v.route} aria-label="Correct route"><option value="">—</option>{#each ROUTES as r}<option value={r}>{r}</option>{/each}</select></td>
-                  <td><select bind:value={v.category} aria-label="Correct category">{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select><br><label class="inline"><input type="checkbox" bind:checked={v.example}> add as example</label></td>
+                  <td><select bind:value={v.category} aria-label="Correct category">{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select><br><label class="inline" title={TIPS.add_example}><input type="checkbox" bind:checked={v.example}> add as example</label></td>
                   <td><button class="primary" disabled={!v.route} onclick={() => labelCandidate(item)}>Save</button></td>
                 </tr>
               {:else}<tr><td colspan="5" class="empty">Nothing uncertain left to label. You can also give a verdict from any incident's workspace.</td></tr>{/each}</tbody>
             </table></div>
           </section>
-          <section class="log-panel admin-panel"><div class="panel-heading"><h2>3 · Tune the gates</h2><span>replays stored Jev answers: free and instant, no provider calls</span></div>
+          <section class="log-panel admin-panel"><div class="panel-heading"><h2>3 · Tune the gates</h2><span title={TIPS.sliders}>replays stored Jev answers: free and instant, no provider calls</span></div>
             <div class="policy-form">
-              <label>Ready gate: {gates.investigate.toFixed(2)}<input type="range" min="0.5" max="1" step="0.01" bind:value={gates.investigate} onchange={() => loadInsight(gates)}></label>
-              <label>Observe gate: {gates.observe.toFixed(2)}<input type="range" min="0.3" max="1" step="0.01" bind:value={gates.observe} onchange={() => loadInsight(gates)}></label>
+              <label title={TIPS.ready_gate}>Ready gate: {gates.investigate.toFixed(2)}<input type="range" min="0.5" max="1" step="0.01" bind:value={gates.investigate} onchange={() => loadInsight(gates)}></label>
+              <label title={TIPS.observe_gate}>Observe gate: {gates.observe.toFixed(2)}<input type="range" min="0.3" max="1" step="0.01" bind:value={gates.observe} onchange={() => loadInsight(gates)}></label>
             </div>
             <dl class="settings">
-              {#each ROUTES as r}<div><dt>Would route to {r}</dt><dd>{q.stages[r] ?? 0}</dd></div>{/each}
-              <div><dt>Near a gate (±0.1)</dt><dd>{q.near_threshold}</dd></div>
+              {#each ROUTES as r}<div><dt title={TIPS.would_route + ' ' + TIPS.routed[r]}>Would route to {r}</dt><dd>{q.stages[r] ?? 0}</dd></div>{/each}
+              <div><dt title={TIPS.near}>Near a gate (±0.1)</dt><dd>{q.near_threshold}</dd></div>
             </dl>
-            {#if q.labelled}<div class="table-scroll"><table class="sources"><thead><tr><th>Your verdict ↓ / would route →</th>{#each ROUTES as r}<th>{r}</th>{/each}</tr></thead>
+            {#if q.labelled}<div class="table-scroll"><table class="sources"><thead><tr><th title={TIPS.confusion}>Your verdict ↓ / would route →</th>{#each ROUTES as r}<th>{r}</th>{/each}</tr></thead>
               <tbody>{#each ROUTES as want}<tr><td>{want}</td>{#each ROUTES as got}<td class:agree={want === got}>{q.confusion[want]?.[got] ?? 0}</td>{/each}</tr>{/each}</tbody></table></div>{/if}
-            <div class="task-actions connect"><button class="primary" disabled={gates.investigate === q.active_thresholds.investigate && gates.observe === q.active_thresholds.observe} onclick={saveThresholds}>Save gates as a new policy</button><span class="muted">Active: {q.active_thresholds.investigate} / {q.active_thresholds.observe}</span></div>
+            <div class="task-actions connect"><button class="primary" disabled={gates.investigate === q.active_thresholds.investigate && gates.observe === q.active_thresholds.observe} title={TIPS.save_gates} onclick={saveThresholds}>Save gates as a new policy</button><span class="muted">Active: {q.active_thresholds.investigate} / {q.active_thresholds.observe}</span></div>
           </section>
           <section class="log-panel admin-panel"><div class="panel-heading"><h2>4 · Sharpen the wording</h2></div>
             <p class="connect">When verdicts show categories being confused, say what each one is <em>not</em> for and add real log lines as examples. Gates can't fix that; better criteria can. Examples you ticked in step 2 are already in the draft.</p>
@@ -758,27 +809,27 @@
           </section>
           <section class="log-panel admin-panel"><div class="panel-heading"><h2>5 · Test before activating</h2><span>re-judges your labelled incidents with a saved version · 1 Jev call per incident per version</span></div>
             <div class="policy-form">
-              <label>Version to test<select bind:value={replayId} onchange={loadReplay}>{#each policies?.versions ?? [] as p}<option value={p.id}>{p.id}{p.id === policies?.active ? ' (active)' : ''} · {p.note || p.config.model}</option>{/each}</select></label>
-              <label>Labelled incidents (newest first)<input type="number" min="1" max="200" bind:value={replayLimit}></label>
+              <label title={TIPS.replay_version}>Version to test<select bind:value={replayId} onchange={loadReplay}>{#each policies?.versions ?? [] as p}<option value={p.id}>{p.id}{p.id === policies?.active ? ' (active)' : ''} · {p.note || p.config.model}</option>{/each}</select></label>
+              <label title={TIPS.replay_limit}>Labelled incidents (newest first)<input type="number" min="1" max="200" bind:value={replayLimit}></label>
             </div>
-            <div class="task-actions connect"><button class="primary" disabled={replayBusy || replayId == null || !q.labelled} onclick={startReplay}>Run test: up to {Math.min(replayLimit, q.labelled) * (replayId === policies?.active ? 1 : 2)} Jev calls</button>
+            <div class="task-actions connect"><button class="primary" disabled={replayBusy || replayId == null || !q.labelled} title={TIPS.run_test} onclick={startReplay}>Run test: up to {Math.min(replayLimit, q.labelled) * (replayId === policies?.active ? 1 : 2)} Jev calls</button>
               <span class="muted">{replayId === policies?.active ? 'Testing the active version.' : 'The active version is judged on the same evidence for a fair comparison.'} Already judged incidents aren't charged again.</span></div>
             {#if replayData && replayData.progress.total}
               {@const r = replayData}
               <p class="connect">{r.progress.done} of {r.progress.total} judged{#if r.progress.errors} · <span class="severity error">{r.progress.errors} failed; run the test again to retry</span>{/if}{#if r.progress.done < r.progress.total} · updating…{/if}</p>
               <div class="table-scroll"><table class="sources">
-                <thead><tr><th>Against your verdicts</th><th>Version {r.policy_id}</th><th>Version {r.against}{r.base_source.stored ? ' *' : ''}</th></tr></thead>
+                <thead><tr><th title="Accuracy of each version measured against your verdicts, on the same incidents">Against your verdicts</th><th>Version {r.policy_id}</th><th>Version {r.against}{r.base_source.stored ? ' *' : ''}</th></tr></thead>
                 <tbody>
-                  <tr><td>Route accuracy</td><td>{pct(r.draft.route_accuracy)}</td><td>{pct(r.base.route_accuracy)}</td></tr>
-                  <tr><td>False ready</td><td>{r.draft.false_ready}</td><td>{r.base.false_ready}</td></tr>
-                  <tr><td>Missed ready</td><td>{r.draft.missed_ready}</td><td>{r.base.missed_ready}</td></tr>
-                  <tr><td>Category accuracy</td><td>{pct(r.draft.category_accuracy)}</td><td>{pct(r.base.category_accuracy)}</td></tr>
+                  <tr><td title={TIPS.route_accuracy}>Route accuracy</td><td>{pct(r.draft.route_accuracy)}</td><td>{pct(r.base.route_accuracy)}</td></tr>
+                  <tr><td title={TIPS.false_ready}>False ready</td><td>{r.draft.false_ready}</td><td>{r.base.false_ready}</td></tr>
+                  <tr><td title={TIPS.missed_ready}>Missed ready</td><td>{r.draft.missed_ready}</td><td>{r.base.missed_ready}</td></tr>
+                  <tr><td title={TIPS.category_accuracy}>Category accuracy</td><td>{pct(r.draft.category_accuracy)}</td><td>{pct(r.base.category_accuracy)}</td></tr>
                 </tbody>
               </table></div>
               {#if r.base_source.stored}<p class="connect muted">* {r.base_source.stored} of these use the incident's live judgment instead of a replay, which may have had more surrounding context.</p>{/if}
               {@const changed = r.cases.filter(differs)}
               {#if changed.length}<div class="table-scroll"><table class="sources">
-                <thead><tr><th>Where they differ</th><th>Your verdict</th><th>Version {r.policy_id}</th><th>Version {r.against}</th></tr></thead>
+                <thead><tr><th title="Tested incidents where the two versions route or categorise differently. Green marks the version that matches your verdict.">Where they differ</th><th>Your verdict</th><th>Version {r.policy_id}</th><th>Version {r.against}</th></tr></thead>
                 <tbody>{#each changed as c}<tr>
                   <td><button class="chip" onclick={async () => { await switchView('incidents'); openIncident(c.incident_id); }}>{c.labels.service} · {c.labels.server_id}</button><br><span class="muted">{c.title}</span></td>
                   <td>{c.label_route}{#if c.label_category}<br><span class="muted">{c.label_category}</span>{/if}</td>
@@ -786,7 +837,7 @@
                   <td class:agree={c.base?.stage === c.label_route}>{#if c.base}{c.base.stage} <span class="muted">{c.base.action.choice} {pct(c.base.action.confidence)}</span><br><span class="muted">{c.base.category.choice}</span>{/if}</td>
                 </tr>{/each}</tbody>
               </table></div>{:else if r.progress.done === r.progress.total}<p class="connect muted">Both versions route and categorise every tested incident the same way.</p>{/if}
-              {#if r.policy_id !== policies?.active && r.progress.done === r.progress.total}<div class="task-actions connect"><button class="primary" onclick={() => activatePolicy(r.policy_id)}>Activate version {r.policy_id}</button></div>{/if}
+              {#if r.policy_id !== policies?.active && r.progress.done === r.progress.total}<div class="task-actions connect"><button class="primary" title={TIPS.activate} onclick={() => activatePolicy(r.policy_id)}>Activate version {r.policy_id}</button></div>{/if}
             {:else if !q.labelled}<p class="connect muted">Give verdicts in step 2 first; the test measures versions against them.</p>{/if}
           </section>
         {/if}
@@ -795,15 +846,15 @@
         {#if !d.configured}<p class="notice">TYPESAFE_API_KEY is not set on the server; jobs stay queued.</p>{/if}
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Control</h2><span class="source-state {d.paused ? 'stale' : 'live'}">{d.paused ? 'paused' : 'running'}</span></div>
           <div class="task-actions jev-actions">
-            {#if d.paused}<button class="primary" onclick={() => jevControl('resume')}>Resume Jev</button>{:else}<button onclick={() => jevControl('pause')}>Pause Jev</button>{/if}
-            <button onclick={() => jevControl('retry_failed')}>Retry failed jobs</button>
-            <button onclick={() => jevControl('cancel_pending')}>Cancel pending jobs</button>
+            {#if d.paused}<button class="primary" title="Start calling Jev again; queued jobs are processed oldest first." onclick={() => jevControl('resume')}>Resume Jev</button>{:else}<button title={TIPS.pause} onclick={() => jevControl('pause')}>Pause Jev</button>{/if}
+            <button title={TIPS.retry} onclick={() => jevControl('retry_failed')}>Retry failed jobs</button>
+            <button title={TIPS.cancel} onclick={() => jevControl('cancel_pending')}>Cancel pending jobs</button>
           </div>
           <dl class="settings">
-            <div><dt>Model</dt><dd>{d.settings.model}</dd></div>
-            <div><dt>Policy</dt><dd>{d.settings.policy_version}</dd></div>
-            <div><dt>Ready gate (investigate ≥)</dt><dd>{d.settings.triage_confidence}</dd></div>
-            <div><dt>Observe gate (observe ≥)</dt><dd>{d.settings.observe_confidence}</dd></div>
+            <div><dt title={TIPS.model}>Model</dt><dd>{d.settings.model}</dd></div>
+            <div><dt title={TIPS.policy}>Policy</dt><dd>{d.settings.policy_version}</dd></div>
+            <div><dt title={TIPS.ready_gate}>Ready gate (investigate ≥)</dt><dd>{d.settings.triage_confidence}</dd></div>
+            <div><dt title={TIPS.observe_gate}>Observe gate (observe ≥)</dt><dd>{d.settings.observe_confidence}</dd></div>
           </dl>
         </section>
         {#if insightData}
@@ -812,10 +863,10 @@
           {@const top = Math.max(1, ...totals)}
           <section class="log-panel admin-panel"><div class="panel-heading"><h2>How Jev is routing</h2><span>{q.triaged} triaged incidents · policy {q.policy_id}</span></div>
             <dl class="settings">
-              {#each ROUTES as r}<div><dt>Routed {r}</dt><dd>{q.stages[r] ?? 0}</dd></div>{/each}
-              <div><dt>Near a gate (±0.1)</dt><dd>{q.near_threshold}</dd></div>
-              <div><dt>Route accuracy vs verdicts</dt><dd>{pct(q.route_accuracy)} <span class="muted">{q.labelled} verdicts</span></dd></div>
-              {#each Object.entries(q.categories).sort((a, b) => b[1] - a[1]) as [c, n]}<div><dt>Category {c}</dt><dd>{n}</dd></div>{/each}
+              {#each ROUTES as r}<div><dt title={TIPS.routed[r]}>Routed {r}</dt><dd>{q.stages[r] ?? 0}</dd></div>{/each}
+              <div><dt title={TIPS.near}>Near a gate (±0.1)</dt><dd>{q.near_threshold}</dd></div>
+              <div><dt title={TIPS.route_accuracy + ' ' + TIPS.verdicts}>Route accuracy vs verdicts</dt><dd>{pct(q.route_accuracy)} <span class="muted">{q.labelled} verdicts</span></dd></div>
+              {#each Object.entries(q.categories).sort((a, b) => b[1] - a[1]) as [c, n]}<div><dt title={TIPS.category_count}>Category {c}</dt><dd>{n}</dd></div>{/each}
             </dl>
             <h3 class="policy-heading" title="Each row is a confidence range. Bars count incidents by what Jev chose (investigate, observe or unknown) and how confident it was. Bar length is relative to the busiest row. Hover a segment to see where those incidents are routed under the current gates.">Actionability confidence <span class="muted">by Jev's choice · hover for routing</span></h3>
             <p class="confidence-legend">{#each CHOICES as c}<span class="legend-{c}" title={CHOICE_HELP[c]}><i aria-hidden="true"></i>{c}</span>{/each}</p>
@@ -834,12 +885,12 @@
         {/if}
         <section class="log-panel admin-panel"><div class="panel-heading"><h2>Last 24 hours</h2></div>
           <dl class="settings">
-            {#each d.last_24h as row}<div><dt>Jobs {row.status}</dt><dd>{row.count}</dd></div>{/each}
-            {#each d.routes_24h as row}<div><dt>Judged {row.choice ?? 'n/a'}</dt><dd>{row.count} <span class="muted">avg {pct(row.avg_confidence)}</span></dd></div>{/each}
+            {#each d.last_24h as row}<div><dt title={TIPS.jobs}>Jobs {row.status}</dt><dd>{row.count}</dd></div>{/each}
+            {#each d.routes_24h as row}<div><dt title={TIPS.judged}>Judged {row.choice ?? 'n/a'}</dt><dd>{row.count} <span class="muted">avg {pct(row.avg_confidence)}</span></dd></div>{/each}
             {#if !d.last_24h.length}<div><dt>Activity</dt><dd>No triage jobs</dd></div>{/if}
           </dl>
         </section>
-        <section class="log-panel admin-panel"><div class="panel-heading"><h2>Pending jobs</h2><span>{d.queue.length} waiting{d.paused ? ' · paused' : ''}</span></div>
+        <section class="log-panel admin-panel"><div class="panel-heading"><h2 title={TIPS.queued}>Pending jobs</h2><span>{d.queue.length} waiting{d.paused ? ' · paused' : ''}</span></div>
           <div class="table-scroll"><table class="sources">
             <thead><tr><th>Incident</th><th>Status</th><th>Queued</th><th>Next attempt</th></tr></thead>
             <tbody>{#each d.queue as j}<tr>
@@ -892,9 +943,9 @@
               <div class="task-actions"><button title="Copies this incident as a JSON agent task (evidence, triage, suggested checks, permissions). Paste it into any AI agent or save it as a file." onclick={() => copyAgentTask(selected!.id)}>Copy agent task</button><button title="Copies a Claude Code command that asks an agent to inspect this incident with the lev-agent skill. Paste it in a terminal at the Lev repo root." onclick={() => copyAgentCommand(`Use the lev-agent skill to inspect Lev incident ${selected!.id}.`)}>Copy agent command</button><button class="primary" onclick={analyze} disabled={queuing || selected.status==='resolved'}>{queuing ? 'Queuing…' : 'Triage again'}</button></div>
               {#if DISMISSABLE.includes(selected.status)}<details class="dismiss"><summary>Dismiss as noise</summary><form onsubmit={(e) => {e.preventDefault(); dismissIncident(selected!, dismissReason);}}><label>Reason (optional)<textarea bind:value={dismissReason} maxlength="10000" placeholder="Human operator decision"></textarea></label><button type="submit">Move to observing</button></form></details>{/if}
               {#if selected.triage}<p class="triage-info">Jev: {selected.triage.answers.actionability.choice} · {Math.round(selected.triage.answers.category.confidence*100)}% category confidence<br><small>{selected.triage.model}</small></p>
-                <details class="dismiss" open={!!selected.label}><summary>{selected.label ? `Your verdict: ${selected.label.route}${selected.label.category ? ' · ' + selected.label.category : ''}` : 'Was Jev right? Give a verdict'}</summary>
+                <details class="dismiss" open={!!selected.label}><summary title={TIPS.verdicts}>{selected.label ? `Your verdict: ${selected.label.route}${selected.label.category ? ' · ' + selected.label.category : ''}` : 'Was Jev right? Give a verdict'}</summary>
                   <form class="verdict" onsubmit={(e) => {e.preventDefault(); saveLabel(selected!.id, incidentVerdict.route, incidentVerdict.category);}}>
-                    <label>Should route to<select bind:value={incidentVerdict.route} required><option value="">—</option>{#each ROUTES as r}<option value={r}>{r}</option>{/each}</select></label>
+                    <label title={TIPS.should_route}>Should route to<select bind:value={incidentVerdict.route} required><option value="">—</option>{#each ROUTES as r}<option value={r}>{r}</option>{/each}</select></label>
                     <label>Category<select bind:value={incidentVerdict.category}>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label>
                     <button type="submit">Save verdict</button>{#if selected.label}<button type="button" onclick={() => saveLabel(selected!.id, null)}>Remove</button>{/if}
                   </form><p class="muted">Verdicts tune Jev; they don't change this incident's stage.</p></details>{/if}

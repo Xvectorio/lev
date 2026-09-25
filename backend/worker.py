@@ -181,7 +181,9 @@ def explain(item, evidence, triage, job_id, checks):
 
 def chat_json(system, user, key, timeout):
     # OpenAI-compatible JSON-mode call with the model/keys from Settings (or .env); returns the raw JSON text.
-    response = httpx.post((setting('AI_BASE_URL') or 'https://api.openai.com/v1').rstrip('/') + '/chat/completions',
+    url = (setting('AI_BASE_URL') or 'https://api.openai.com/v1').rstrip('/')
+    url = url if url.endswith('/chat/completions') else url + '/chat/completions'  # accept a base URL or the full endpoint
+    response = httpx.post(url,
         headers={'Authorization': 'Bearer ' + setting('AI_API_KEY'), 'Idempotency-Key': key},
         json={'model': setting('AI_MODEL'), 'response_format': {'type': 'json_object'}, 'messages': [
             {'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(user)}]}, timeout=timeout)

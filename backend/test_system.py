@@ -230,8 +230,14 @@ def run():
                 return httpx.Response(200, request=httpx.Request('POST', url), json={'choices': [{'message': {'content': content}}]})
             with patch.object(worker.httpx, 'post', side_effect=ai):
                 suggested = client.post('/api/jev/suggest', headers=admin, json=draft_config).json()
-            assert suggested['cases'] == 1 and [s['field'] for s in suggested['suggestions']] == ['categories.database'], suggested
-            client.post('/api/settings', headers=admin, json={'AI_MODEL': ''})
+            assert suggested['misjudged'] == 1 and suggested['uncertain'] == 0 and [s['field'] for s in suggested['suggestions']] == ['categories.database'], suggested
+            # A full endpoint URL in Settings is not doubled (was: .../chat/completions/chat/completions -> 404).
+            for base in ('https://ai.example/v1', 'https://ai.example/v1/chat/completions/'):
+                client.post('/api/settings', headers=admin, json={'AI_BASE_URL': base})
+                with patch.object(worker.httpx, 'post', side_effect=ai) as sent:
+                    worker.chat_json('s', {'misjudged': [{'expected_route': 'observing'}]}, 'k', 5)
+                assert sent.call_args.args[0] == 'https://ai.example/v1/chat/completions', sent.call_args
+            client.post('/api/settings', headers=admin, json={'AI_MODEL': '', 'AI_BASE_URL': ''})
             with core.db() as conn:
                 conn.execute('UPDATE incidents SET labels=labels||%s', (Jsonb({'project_id':'lev-test','host':schema}),))
             problem_list = client.get('/api/incidents?samples=true', headers=admin)

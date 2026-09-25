@@ -106,3 +106,5 @@ td.agree{font-weight:700;color:#176b69}
 @media (max-width:900px){.policy-row{grid-template-columns:1fr}}
 .suggestion{padding:12px 20px;border-bottom:1px solid var(--line)}.suggestion p{margin:0 0 8px}.suggestion-diff{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px}.suggestion-diff pre{white-space:pre-wrap;margin:4px 0 0;font-size:12px;padding:8px 10px;border:1px solid var(--line);border-radius:5px}
 @media (max-width:900px){.suggestion-diff{grid-template-columns:1fr}}
+.ai-result{font-size:13px;border-left:3px solid #176b69;margin:0 20px 12px;padding:8px 12px;background:var(--panel,transparent)}
+.settings dt[title],th[title],td[title],.policy-form label[title],.policy-row label[title],.panel-heading [title]{cursor:help}.settings dt[title],th[title],.panel-heading span[title]{text-decoration:underline dotted;text-underline-offset:3px}
