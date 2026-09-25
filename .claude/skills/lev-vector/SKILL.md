@@ -11,12 +11,13 @@ Vector on each server reads logs, normalizes and redacts them, and pushes **warn
 
 ## Compatibility contract (never break)
 
-- `vector.yaml` is **shared and identical on every server**. Don't edit it per server. Its `normalize` → `multiline` → `exceptions` → `relevant` → `loki` chain sets the labels (`project_id, server_id, host, service, environment`), severity, redaction and heartbeat that Lev depends on. Resolution of incidents needs the heartbeat.
+- `vector.yaml` is **shared and identical on every server**. Don't edit it per server. Its `normalize` → `multiline` → `exceptions` → `local` → `relevant` → `loki` chain sets the labels (`project_id, server_id, host, service, environment`), severity, redaction and heartbeat that Lev depends on. Resolution of incidents needs the heartbeat.
 - Per-server additions go **only** in `watch.d/<thing>.yaml` plus read-only volume mounts in the compose file. `normalize` takes input from `"watch_*"`, so a `watch_<thing>` transform is picked up automatically.
 - In a watch file, name the source `src_<thing>` (never `watch_…`, or it would be ingested twice) and the remap `watch_<thing>`. The remap may set only:
   - `.lev_service`: the service label. Keep it short and stable: `nginx`, `payments-api`.
   - `.lev_level`: the level, only for formats the shared parser misses.
   - `.message`: extra redaction only.
+- To silence or promote lines this server already collects (e.g. firewall blocks in the journal), use `watch.d/local.vrl`, never `vector.yaml`. It runs as the `local` remap after the shared levelling, so it sees `.message`, `.level`, `.service`, and may only set `.level` (only warn/error/fatal reach Lev) or `abort` to drop. Test it with `insert_at: local` / `extract_from: relevant` in a watch file's `tests:`. Without the file, a no-op default from the image is used.
 - Never add labels (Loki cardinality), and never add a second sink, `docker.sock`, a `/` mount or write access.
 - Never print `.env` or the ingestion password.
 
@@ -34,10 +35,10 @@ Vector on each server reads logs, normalizes and redacts them, and pushes **warn
 Validate and test (source server; on the central host `docker compose -f compose.tools.yaml run --rm vector-check` / `vector-test` do the same):
 
 ```sh
-docker compose run --rm --no-deps --entrypoint vector vector validate --no-environment --config-dir /etc/vector/watch.d /etc/vector/vector.yaml
+docker compose run --rm --no-deps --entrypoint sh vector -c '[ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector validate --no-environment --config-dir /etc/vector/watch.d /etc/vector/vector.yaml'
 # the shared tests assert these fixed labels, so tests always run with them:
 docker compose run --rm --no-deps -e VECTOR_HOST=test-host -e VECTOR_SERVER_ID=test-server -e VECTOR_PROJECT_ID=test-project \
-  -e VECTOR_ENVIRONMENT=test --entrypoint sh vector -c 'vector test /etc/vector/vector.yaml /etc/vector/watch.d/*.yaml'
+  -e VECTOR_ENVIRONMENT=test --entrypoint sh vector -c '[ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector test /etc/vector/vector.yaml /etc/vector/watch.d/*.yaml'
 ```
 
 ## A. Install on a new server

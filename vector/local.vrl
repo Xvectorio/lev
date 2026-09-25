@@ -1,0 +1,3 @@
+# Default per-server rules: none. Override with watch.d/local.vrl (kept outside Lev releases).
+# Runs after the shared levelling; only warn/error/fatal reach Lev. Example:
+#   if starts_with(string!(.message), "[UFW BLOCK]") { .level = "info" }

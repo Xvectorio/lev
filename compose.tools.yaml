@@ -9,7 +9,7 @@ services:
       - .:/project
   vector-check:
     image: timberio/vector:0.51.1-debian
-    entrypoint: [vector, validate, --no-environment, --config-dir, /etc/vector/watch.d, /etc/vector/vector.yaml]
+    entrypoint: [sh, -c, '[ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; exec vector validate --no-environment --config-dir /etc/vector/watch.d /etc/vector/vector.yaml']
     environment:
       VECTOR_HOST: test-host
       VECTOR_SERVER_ID: test-server
@@ -20,7 +20,8 @@ services:
       VECTOR_CONTAINER_GLOB: test-id
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./vector/local.vrl:/etc/vector/local.vrl:ro
       - ./vector/watch.d:/etc/vector/watch.d:ro
   vector-test:
     extends: vector-check
-    entrypoint: [sh, -c, 'set -- /etc/vector/watch.d/*.yaml; [ -e "$$1" ] || set --; exec vector test /etc/vector/vector.yaml "$$@"']
+    entrypoint: [sh, -c, '[ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; set -- /etc/vector/watch.d/*.yaml; [ -e "$$1" ] || set --; exec vector test /etc/vector/vector.yaml "$$@"']

@@ -48,7 +48,7 @@
       '$ docker compose up -d',
       'The server appears in this table after its first heartbeat (about a minute). Collection starts at the current end of each log, not its history.',
       '# Extra log sources',
-      'Add a file per service in watch.d/<name>.yaml (a src_<name> source plus a watch_<name> remap setting .lev_service) with read-only mounts in compose.override.yaml. Never edit the shared vector.yaml. Include tests: with real sample lines and check that secrets are redacted.',
+      'Add a file per service in watch.d/<name>.yaml (a src_<name> source plus a watch_<name> remap setting .lev_service) with read-only mounts in compose.override.yaml. Never edit the shared vector.yaml; to quiet noise a server already collects (e.g. UFW blocks), put VRL that lowers .level in watch.d/local.vrl. Include tests: with real sample lines and check that secrets are redacted.',
       'Do not collect the same app through both its file and journal source. Container IDs change on redeploy; refresh container watch files afterwards.',
     ]},
     connect: { title: 'Connecting agents', body: [

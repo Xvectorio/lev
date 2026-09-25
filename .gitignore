@@ -8,5 +8,6 @@ artifacts/
 vector/.env
 compose.override.yaml
 vector/watch.d/*.yaml
+vector/watch.d/local.vrl
 STATUS.md
 CLASSIFICATION_REVIEW.md

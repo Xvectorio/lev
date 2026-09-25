@@ -15,6 +15,7 @@ services:
     build: ./vector
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./vector/local.vrl:/etc/vector/local.vrl:ro
   test:
     image: ghcr.io/xvectorio/lev-api:${LEV_VERSION:-latest}
     profiles: [tools]

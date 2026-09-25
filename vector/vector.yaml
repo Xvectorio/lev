@@ -93,9 +93,14 @@ transforms:
     source: |
       # The reduce keeps the head line's level; an exception merged under an info head must not be dropped.
       if (.level == "info" || .level == "debug") && match(string!(.message), r'(?m)^(?:Traceback|Caused by:|[A-Za-z.]+(?:Error|Exception):)') { .level = "error" }
+  # Per-server overrides: watch.d/local.vrl (outside releases) may change .level or abort to drop; default is a no-op.
+  local:
+    type: remap
+    inputs: [exceptions]
+    file: ${LEV_LOCAL_VRL:-/etc/vector/local.vrl}
   relevant:
     type: filter
-    inputs: [exceptions]
+    inputs: [local]
     condition: '(.level == "warn" || .level == "error" || .level == "fatal") || .service == "lev-heartbeat"'
 sinks:
   loki:
@@ -304,6 +309,18 @@ tests:
           message: 'level=warning msg="healthcheck failed" container=abc error="connection refused"'
     outputs:
       - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.level, "warn")'
+  - name: local rules pass warnings through by default
+    inputs:
+      - insert_at: local
+        type: log
+        log_fields:
+          message: disk almost full
+          level: warn
+    outputs:
+      - extract_from: relevant
         conditions:
           - type: vrl
             source: 'assert_eq!(.level, "warn")'
