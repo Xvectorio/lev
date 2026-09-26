@@ -263,6 +263,11 @@ def run():
             assert client.get('/api/incidents', headers=admin, params={'samples': 'true', 'project_id': 'other'}).json() == []
             tree = client.get('/api/incidents/tree', headers=admin, params={'samples': 'true'}).json()
             assert [(t['project_id'], t['count']) for t in tree] == [('lev-test', 1)], tree
+            level = problem_list.json()[0]['level']
+            assert len(client.get('/api/incidents', headers=admin, params={'samples': 'true', 'level': level}).json()) == 1
+            other = 'warn' if level != 'warn' else 'fatal'
+            assert client.get('/api/incidents', headers=admin, params={'samples': 'true', 'level': other}).json() == []
+            assert client.get('/api/incidents/tree', headers=admin, params={'samples': 'true', 'level': other}).json() == []
             assert client.post('/api/analyze', headers={'Cookie': admin['Cookie']}).status_code == 403
             task = client.get('/api/agent/tasks/' + incident_id, headers=agent).json()
             assert task['permissions']['approved_proposal'] is None

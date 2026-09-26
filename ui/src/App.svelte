@@ -90,7 +90,7 @@
   async function loadLabels() {
     try { labelValues = { ...(await api('/labels')), level: ['warn','error','fatal'] }; } catch {}
   }
-  let problemStatus = $state(''), category = $state(''), seenMinutes = $state(''), problemOffset = $state(0), filtered = $state(false);
+  let problemStatus = $state(''), category = $state(''), incidentLevel = $state(''), seenMinutes = $state(''), problemOffset = $state(0), filtered = $state(false);
   // Fields column (incidents and log explorer): counts per project → server → service, minus what is hidden on the Sources page.
   type TreeRow = {project_id: string; server_id: string; service: string; count: number; errors: number};
   type Fields = ReturnType<typeof buildFields>;
@@ -104,7 +104,7 @@
     return {total: rows.reduce((n, r) => n + r.count, 0), top: group(rows, 'service').slice(0, 6),
       projects: group(rows, 'project_id').map(p => ({...p, servers: group(p.rows, 'server_id').map(s => ({...s, services: group(s.rows, 'service')}))}))};
   }
-  // Incidents: counted server-side over all pages (stage/category/time filters apply, label filters don't).
+  // Incidents: counted server-side over all pages (stage/category/severity/time filters apply, label filters don't).
   let incidentTree = $state<TreeRow[]>([]), project = $state(''), server = $state('');
   const incidentFields = $derived(buildFields(incidentTree));
   function pickSource(p: string, s: string, svc: string) {
@@ -219,12 +219,12 @@
   }
 
   function clearIncidentFilters() {
-    service = ''; project = ''; server = ''; problemStatus = ''; category = ''; seenMinutes = ''; problemOffset = 0; loadIncidents();
+    service = ''; project = ''; server = ''; problemStatus = ''; category = ''; incidentLevel = ''; seenMinutes = ''; problemOffset = 0; loadIncidents();
   }
   async function loadIncidents() {
     loading = true; error = '';
-    filtered = !!(service || project || server || problemStatus || category || seenMinutes);
-    const scope = {status: problemStatus, category, minutes: seenMinutes || '0'};
+    filtered = !!(service || project || server || problemStatus || category || incidentLevel || seenMinutes);
+    const scope = {status: problemStatus, category, level: incidentLevel, minutes: seenMinutes || '0'};
     try { [incidents, incidentTree] = await Promise.all([api('/incidents?' + new URLSearchParams({...scope, service, project_id: project, server_id: server, offset: String(problemOffset)})), api('/incidents/tree?' + new URLSearchParams(scope))]); }
     catch (e) { error = (e as Error).message; }
     finally { loading = false; }
@@ -1009,7 +1009,7 @@
       <div class="incident-toolbar"><p>Actionable incidents, from first evidence to verified resolution.</p><button onclick={loadIncidents} disabled={loading}>Refresh incidents</button></div>
       <div class="workflow" aria-label="Incident workflow">{#each ['ready','proposed','verifying','resolved'] as stage}<button class:chosen={problemStatus===stage} onclick={() => {problemStatus=problemStatus===stage?'':stage;problemOffset=0;loadIncidents();}}><span>{stage==='ready'?'Ready for agent':stage==='proposed'?'Fix proposed':stage==='verifying'?'Verifying':'Resolved'}</span><strong>{stageCount(stage)}</strong></button>{/each}</div>
       {#if status && !status.jev_configured}<p class="notice">Jev is not connected. Incidents and evidence are being collected; configure the server-side TypeSafe API key to enable triage.</p>{/if}
-      <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><label>Last seen<select bind:value={seenMinutes}><option value="">Any time</option><option value="60">Last hour</option><option value="1440">Last 24 hours</option><option value="10080">Last 7 days</option><option value="43200">Last 30 days</option></select></label><button type="submit">Filter incidents</button><button type="button" class="icon-button" onclick={clearIncidentFilters} aria-label="Clear filters" title="Clear filters"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h14l-5.5 7v6l-3 2v-8z"/><path d="M16 14l5 5M21 14l-5 5"/></svg></button><span class="filter-count">{(incidents[0]?.total ?? 0).toLocaleString()} found</span></form>
+      <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><label>Severity<select bind:value={incidentLevel}><option value="">All severities</option><option>warn</option><option>error</option><option>fatal</option></select></label><label>Last seen<select bind:value={seenMinutes}><option value="">Any time</option><option value="60">Last hour</option><option value="1440">Last 24 hours</option><option value="10080">Last 7 days</option><option value="43200">Last 30 days</option></select></label><button type="submit">Filter incidents</button><button type="button" class="icon-button" onclick={clearIncidentFilters} aria-label="Clear filters" title="Clear filters"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h14l-5.5 7v6l-3 2v-8z"/><path d="M16 14l5 5M21 14l-5 5"/></svg></button><span class="filter-count">{(incidents[0]?.total ?? 0).toLocaleString()} found</span></form>
       <div class="search-results">
       <aside class="fields"><h2>Fields</h2><p>Incidents on all pages; stage, category and time filters apply</p>{@render fieldsTree(incidentFields, 'incidents', [project, server, service], pickSource)}</aside>
       <div class="investigation results-main" class:with-detail={selected !== null}>
@@ -1025,7 +1025,7 @@
               </button>
               {#if DISMISSABLE.includes(item.status)}<button class="quick-dismiss" title="Dismiss as noise (moves to observing)" onclick={() => dismissIncident(item)}>Dismiss</button>{/if}
             </div>
-          {:else}{#if filtered}<div class="empty"><h3>No incidents match your filters</h3><p>Nothing passes the current field, stage, category or time filters.</p><button onclick={clearIncidentFilters}>Clear filters</button></div>{:else}<div class="empty"><h3>No incidents detected</h3><p>Warnings, failures and actionable symptoms appear after the next collection pass. Connect a source server to start.</p></div>{/if}{/each}
+          {:else}{#if filtered}<div class="empty"><h3>No incidents match your filters</h3><p>Nothing passes the current field, stage, category, severity or time filters.</p><button onclick={clearIncidentFilters}>Clear filters</button></div>{:else}<div class="empty"><h3>No incidents detected</h3><p>Warnings, failures and actionable symptoms appear after the next collection pass. Connect a source server to start.</p></div>{/if}{/each}
           <div class="pagination"><button disabled={problemOffset===0} onclick={()=>{problemOffset=Math.max(0,problemOffset-100);loadIncidents();}}>Previous</button><span>Page {problemOffset/100+1}</span><button disabled={incidents.length<100} onclick={()=>{problemOffset+=100;loadIncidents();}}>Next</button></div>
         </section>
         {#if selected}

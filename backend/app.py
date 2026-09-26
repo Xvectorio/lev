@@ -199,17 +199,17 @@ def get_problem(conn, incident_id, lock=False):
     return item
 
 
-def incident_filter(status, category, minutes, samples, labels):
+def incident_filter(status, category, level, minutes, samples, labels):
     return f'''i.superseded_by IS NULL AND (%s OR NOT {SAMPLE_SQL}) AND i.labels @> %s
-            AND (%s='' OR i.status=%s) AND (%s='' OR i.category=%s)
+            AND (%s='' OR i.status=%s) AND (%s='' OR i.category=%s) AND (%s='' OR i.level=%s)
             AND (%s=0 OR i.last_ns >= (extract(epoch FROM now())::bigint - %s*60)*1000000000)''', \
-        (samples, Jsonb(labels), status, status, category, category, minutes, minutes)
+        (samples, Jsonb(labels), status, status, category, category, level, level, minutes, minutes)
 
 
 @app.get('/api/incidents')
-def incidents(service: str = '', server_id: str = '', project_id: str = '', status: str = '', category: str = '', minutes: int = Query(0, ge=0), offset: int = Query(0, ge=0), samples: bool = False):
+def incidents(service: str = '', server_id: str = '', project_id: str = '', status: str = '', category: str = '', level: str = '', minutes: int = Query(0, ge=0), offset: int = Query(0, ge=0), samples: bool = False):
     labels = {k: v for k, v in {'service': service, 'server_id': server_id, 'project_id': project_id}.items() if v}
-    where, params = incident_filter(status, category, minutes, samples, labels)
+    where, params = incident_filter(status, category, level, minutes, samples, labels)
     with db() as conn:
         return conn.execute(f'''SELECT *,first_ns::text AS first_ns,last_ns::text AS last_ns,count(*) OVER () AS total
             FROM incidents i WHERE {where}
@@ -219,9 +219,9 @@ def incidents(service: str = '', server_id: str = '', project_id: str = '', stat
 
 
 @app.get('/api/incidents/tree')
-def incident_tree(status: str = '', category: str = '', minutes: int = Query(0, ge=0), samples: bool = False):
-    """Incident counts per project/server/service under the stage/category/time filters (label filters ignored)."""
-    where, params = incident_filter(status, category, minutes, samples, {})
+def incident_tree(status: str = '', category: str = '', level: str = '', minutes: int = Query(0, ge=0), samples: bool = False):
+    """Incident counts per project/server/service under the stage/category/severity/time filters (label filters ignored)."""
+    where, params = incident_filter(status, category, level, minutes, samples, {})
     with db() as conn:
         return conn.execute(f'''SELECT i.labels->>'project_id' AS project_id, i.labels->>'server_id' AS server_id,
             i.labels->>'service' AS service, count(*) AS count, count(*) FILTER (WHERE i.level IN ('error','fatal')) AS errors
