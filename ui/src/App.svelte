@@ -65,9 +65,12 @@
   let sourceText = $state(''), sourceFilters = $state<Record<string, string>>({});
   const sourceValues = $derived(Object.fromEntries(SOURCE_FIELDS.map(f => [f, [...new Set((sources?.sources ?? [])
     .flatMap(s => f === 'service' ? Object.keys(s.services) : [String(s[f as keyof Source])]))].sort()])));
-  // Sources and their logs (services) hidden from the Sources page; this browser only, unhide in Settings.
+  // Sources and their logs (services) hidden from the Sources page and the Fields columns; this browser only, unhide in Settings.
   let hidden = $state<string[]>((() => { try { return JSON.parse(localStorage.getItem('lev-hidden') ?? '[]'); } catch { return []; } })());
   $effect(() => { try { localStorage.setItem('lev-hidden', JSON.stringify(hidden)); } catch {} });
+  // Fields tree nodes the viewer opened or closed (projects start collapsed, servers open); this browser only.
+  let fieldsOpen = $state<Record<string, boolean>>((() => { try { return JSON.parse(localStorage.getItem('lev-fields-open') ?? '{}'); } catch { return {}; } })());
+  $effect(() => { try { localStorage.setItem('lev-fields-open', JSON.stringify(fieldsOpen)); } catch {} });
   const sourceKey = (s: Source) => `${s.project_id}/${s.server_id}`;
   const sourceRows = $derived.by(() => {
     const terms = [...sourceText.toLowerCase().matchAll(/(not\s+)?(?:(\w+)=)?("[^"]*"?|\S+)?/g)]
@@ -88,6 +91,27 @@
     try { labelValues = { ...(await api('/labels')), level: ['warn','error','fatal'] }; } catch {}
   }
   let problemStatus = $state(''), category = $state(''), seenMinutes = $state(''), problemOffset = $state(0), filtered = $state(false);
+  // Fields column (incidents and log explorer): counts per project → server → service, minus what is hidden on the Sources page.
+  type TreeRow = {project_id: string; server_id: string; service: string; count: number; errors: number};
+  type Fields = ReturnType<typeof buildFields>;
+  function group(rows: TreeRow[], key: 'project_id' | 'server_id' | 'service') {
+    const out = new Map<string, TreeRow[]>();
+    for (const row of rows) out.set(row[key], [...(out.get(row[key]) ?? []), row]);
+    return [...out].map(([name, rows]) => ({name, rows, count: rows.reduce((n, r) => n + r.count, 0), errors: rows.reduce((n, r) => n + r.errors, 0)})).sort((a, b) => b.count - a.count);
+  }
+  function buildFields(all: TreeRow[]) {
+    const rows = all.filter(r => !hidden.includes(`${r.project_id}/${r.server_id}`) && !hidden.includes(`${r.project_id}/${r.server_id}/${r.service}`));
+    return {total: rows.reduce((n, r) => n + r.count, 0), top: group(rows, 'service').slice(0, 6),
+      projects: group(rows, 'project_id').map(p => ({...p, servers: group(p.rows, 'server_id').map(s => ({...s, services: group(s.rows, 'service')}))}))};
+  }
+  // Incidents: counted server-side over all pages (stage/category/time filters apply, label filters don't).
+  let incidentTree = $state<TreeRow[]>([]), project = $state(''), server = $state('');
+  const incidentFields = $derived(buildFields(incidentTree));
+  function pickSource(p: string, s: string, svc: string) {
+    const same = project === p && server === s && service === svc;
+    project = same ? '' : p; server = same ? '' : s; service = same ? '' : svc;
+    problemOffset = 0; loadIncidents();
+  }
   const stages = ['new','review','ready','observing','proposed','approved','verifying','resolved'];
   let rows = $state<Log[]>([]), incidents = $state<Incident[]>([]), selected = $state<Detail | null>(null);
   let status = $state<Status | null>(null), error = $state(''), notice = $state('');
@@ -97,7 +121,17 @@
   const time = (ns: string) => new Date(Number(BigInt(ns) / 1000000n)).toLocaleString();
   const pending = $derived(status?.jobs.filter(j => ['pending','running','failed'].includes(j.status)).reduce((sum, j) => sum + Number(j.count), 0) ?? 0);
   const stageCount = (stage: string) => Number(status?.problems.find(p => p.status === stage)?.count ?? 0);
-  const facets = $derived(['service','host','server_id','project_id','environment'].map(field => ({field, values: Object.entries(rows.reduce((acc, row) => {const value = row.labels[field as keyof Labels]; acc[value] = (acc[value] || 0) + 1; return acc;}, {} as Record<string, number>)).sort((a,b) => b[1]-a[1]).slice(0,8)})));
+  const logFields = $derived(buildFields([...rows.reduce((acc, {labels: l, level}) => {
+    const key = `${l.project_id}/${l.server_id}/${l.service}`, t = acc.get(key) ?? {project_id: l.project_id, server_id: l.server_id, service: l.service, count: 0, errors: 0};
+    t.count++; if (level === 'error' || level === 'fatal') t.errors++;
+    return acc.set(key, t);
+  }, new Map<string, TreeRow>()).values()]));
+  function pickLogSource(p: string, s: string, svc: string) {
+    const {project_id = '', server_id = '', service: current = '', ...rest} = filters;
+    const same = project_id === p && server_id === s && current === svc;
+    filters = same ? rest : {...rest, ...(p && {project_id: p}), ...(s && {server_id: s}), ...(svc && {service: svc})};
+    search();
+  }
   const bins = $derived.by(() => {
     if (!rows.length) return [];
     const oldest = BigInt(rows[rows.length-1].ts_ns), newest = BigInt(rows[0].ts_ns);
@@ -185,12 +219,13 @@
   }
 
   function clearIncidentFilters() {
-    service = ''; problemStatus = ''; category = ''; seenMinutes = ''; problemOffset = 0; loadIncidents();
+    service = ''; project = ''; server = ''; problemStatus = ''; category = ''; seenMinutes = ''; problemOffset = 0; loadIncidents();
   }
   async function loadIncidents() {
     loading = true; error = '';
-    filtered = !!(service || problemStatus || category || seenMinutes);
-    try { incidents = await api('/incidents?' + new URLSearchParams({service, status: problemStatus, category, minutes: seenMinutes || '0', offset: String(problemOffset)})); }
+    filtered = !!(service || project || server || problemStatus || category || seenMinutes);
+    const scope = {status: problemStatus, category, minutes: seenMinutes || '0'};
+    try { [incidents, incidentTree] = await Promise.all([api('/incidents?' + new URLSearchParams({...scope, service, project_id: project, server_id: server, offset: String(problemOffset)})), api('/incidents/tree?' + new URLSearchParams(scope))]); }
     catch (e) { error = (e as Error).message; }
     finally { loading = false; }
   }
@@ -578,6 +613,17 @@
 
 <svelte:head><title>{view === 'logs' ? 'Logs' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev' : view === 'settings' ? 'Settings' : 'Incidents'} · Lev</title></svelte:head>
 
+{#snippet fieldsTree(t: Fields, unit: string, at: string[], pick: (p: string, s: string, svc: string) => void)}
+  {#snippet node(n: {count: number; errors: number}, total: number, label: string, p: string, s = '', svc = '')}
+    {@const chosen = at.join('/') === [p, s, svc].join('/')}
+    <button class:chosen title="{n.count} {unit}, {n.errors} at error level. Click to {chosen ? 'remove this filter' : 'filter'}." onclick={(e) => {e.preventDefault(); pick(p, s, svc);}}><span>{label}</span><b>{n.count}</b><span class="meter" style:width="{n.count / total * 100}%"><span style:width="{n.errors / n.count * 100}%"></span></span></button>
+  {/snippet}
+  <h3>Most affected services</h3>{#each t.top as svc}{@render node(svc, t.total, svc.name, '', '', svc.name)}{:else}<p>No {unit}.</p>{/each}
+  <h3>By source</h3>{#each t.projects as p}<details open={fieldsOpen[p.name] ?? false} ontoggle={(e) => fieldsOpen[p.name] = e.currentTarget.open}><summary>{@render node(p, t.total, p.name, p.name)}</summary>
+    {#each p.servers as s}<details open={fieldsOpen[`${p.name}/${s.name}`] ?? true} ontoggle={(e) => fieldsOpen[`${p.name}/${s.name}`] = e.currentTarget.open}><summary>{@render node(s, p.count, s.name, p.name, s.name)}</summary>
+      {#each s.services as svc}{@render node(svc, s.count, svc.name, p.name, s.name, svc.name)}{/each}
+    </details>{/each}</details>{/each}
+{/snippet}
 {#snippet mark()}<svg class="brand-mark" viewBox="0 0 48 32" aria-hidden="true"><g fill="#19564f"><rect width="6.7" height="6.5" rx="1.2"/><rect y="10.3" width="6.7" height="6.5" rx="1.2"/><rect y="20.5" width="6.7" height="6.5" rx="1.2"/><rect x="10" y=".4" width="29.6" height="5.6" rx="1.2"/><rect x="10" y="10.6" width="22.3" height="5.6" rx="1.2"/><rect x="10" y="20.8" width="9.5" height="5.6" rx="1.2"/></g><path d="M24.5 22l5.3 5.5L44 12.5" fill="none" stroke="#1ca66a" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{/snippet}
 
 {#if !auth?.user}
@@ -644,7 +690,7 @@
       </form>
       {#if range}<p class="notice">Evidence window: {time(range.start)} to {time(range.end)} <button onclick={() => {range = null; search();}}>Back to recent logs</button></p>{/if}
       <div class="search-results">
-        <aside class="fields"><h2>Fields</h2><p>Counts in loaded events</p>{#each facets as facet}<h3>{facet.field}</h3>{#each facet.values as [value,count]}<button onclick={() => {setFilter(facet.field, value); search();}}><span>{value}</span><b>{count}</b></button>{/each}{/each}</aside>
+        <aside class="fields"><h2>Fields</h2><p>Counts in loaded events</p>{@render fieldsTree(logFields, 'events', [filters.project_id ?? '', filters.server_id ?? '', filters.service ?? ''], pickLogSource)}</aside>
         <div class="results-main">
         {#if bins.length}<section class="timeline"><div class="panel-heading"><h2>Loaded event distribution</h2><span>Click a bar to narrow the time range</span></div><div class="histogram">{#each bins as bin}<button aria-label={`${bin.count} events from ${time(String(bin.start))}`} title={`${bin.count} events at ${time(String(bin.start))}`} onclick={() => {range={start:String(bin.start),end:String(bin.end)};search();}}><svg viewBox="0 0 20 60" aria-hidden="true"><rect x="1" y={60-Math.max(2,bin.count/Math.max(...bins.map(b=>b.count))*58)} width="18" height={Math.max(2,bin.count/Math.max(...bins.map(b=>b.count))*58)} /></svg></button>{/each}</div><div class="timeline-labels"><time>{time(rows[rows.length-1].ts_ns)}</time><time>{time(rows[0].ts_ns)}</time></div></section>{/if}
       <section class="log-panel" aria-label="Search results" aria-busy={loading}>
@@ -964,7 +1010,9 @@
       <div class="workflow" aria-label="Incident workflow">{#each ['ready','proposed','verifying','resolved'] as stage}<button class:chosen={problemStatus===stage} onclick={() => {problemStatus=problemStatus===stage?'':stage;problemOffset=0;loadIncidents();}}><span>{stage==='ready'?'Ready for agent':stage==='proposed'?'Fix proposed':stage==='verifying'?'Verifying':'Resolved'}</span><strong>{stageCount(stage)}</strong></button>{/each}</div>
       {#if status && !status.jev_configured}<p class="notice">Jev is not connected. Incidents and evidence are being collected; configure the server-side TypeSafe API key to enable triage.</p>{/if}
       <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><label>Last seen<select bind:value={seenMinutes}><option value="">Any time</option><option value="60">Last hour</option><option value="1440">Last 24 hours</option><option value="10080">Last 7 days</option><option value="43200">Last 30 days</option></select></label><button type="submit">Filter incidents</button><button type="button" class="icon-button" onclick={clearIncidentFilters} aria-label="Clear filters" title="Clear filters"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h14l-5.5 7v6l-3 2v-8z"/><path d="M16 14l5 5M21 14l-5 5"/></svg></button><span class="filter-count">{(incidents[0]?.total ?? 0).toLocaleString()} found</span></form>
-      <div class="investigation" class:with-detail={selected !== null}>
+      <div class="search-results">
+      <aside class="fields"><h2>Fields</h2><p>Incidents on all pages; stage, category and time filters apply</p>{@render fieldsTree(incidentFields, 'incidents', [project, server, service], pickSource)}</aside>
+      <div class="investigation results-main" class:with-detail={selected !== null}>
         <section class="incident-list" aria-label="Incidents">
           {#if incidents.some(i => DISMISSABLE.includes(i.status))}<div class="list-actions"><button onclick={dismissAll} disabled={loading} title="Dismiss all incidents on this page as noise (moves them to observing)">Dismiss all</button></div>{/if}
           {#each incidents as item}
@@ -977,7 +1025,7 @@
               </button>
               {#if DISMISSABLE.includes(item.status)}<button class="quick-dismiss" title="Dismiss as noise (moves to observing)" onclick={() => dismissIncident(item)}>Dismiss</button>{/if}
             </div>
-          {:else}{#if filtered}<div class="empty"><h3>No incidents match your filters</h3><p>Nothing passes the current service, stage, category or time filters.</p><button onclick={clearIncidentFilters}>Clear filters</button></div>{:else}<div class="empty"><h3>No incidents detected</h3><p>Warnings, failures and actionable symptoms appear after the next collection pass. Connect a source server to start.</p></div>{/if}{/each}
+          {:else}{#if filtered}<div class="empty"><h3>No incidents match your filters</h3><p>Nothing passes the current field, stage, category or time filters.</p><button onclick={clearIncidentFilters}>Clear filters</button></div>{:else}<div class="empty"><h3>No incidents detected</h3><p>Warnings, failures and actionable symptoms appear after the next collection pass. Connect a source server to start.</p></div>{/if}{/each}
           <div class="pagination"><button disabled={problemOffset===0} onclick={()=>{problemOffset=Math.max(0,problemOffset-100);loadIncidents();}}>Previous</button><span>Page {problemOffset/100+1}</span><button disabled={incidents.length<100} onclick={()=>{problemOffset+=100;loadIncidents();}}>Next</button></div>
         </section>
         {#if selected}
@@ -1010,6 +1058,7 @@
             </div>
           </section>
         {/if}
+      </div>
       </div>
     {/if}
     <footer>All times shown in your local timezone. <span>Lev [{import.meta.env.VITE_LEV_VERSION ?? 'dev'}]</span></footer>

@@ -58,7 +58,7 @@ The **Theme** control offers System, Light and Dark modes. Your choice is saved 
 
 ![Log explorer with field filters, histogram and event stream](screenshots/log-explorer.png)
 
-- **Svelte 5 + TypeScript + Vite**, static assets served by Caddy. The **Incidents** workspace opens first; a Splunk-inspired explorer offers search, time/service/host/severity filters, fields and an interactive histogram of the loaded events. The histogram is explicitly a bounded result view, not a full-volume metric. Collector heartbeats are hidden unless you filter on service `lev-heartbeat`.
+- **Svelte 5 + TypeScript + Vite**, static assets served by Caddy. The **Incidents** workspace opens first, with a Fields column (most affected services and a project → server → service tree, counted over all matching incidents) that filters the list; a Splunk-inspired explorer offers search, time/service/host/severity filters, the same Fields tree and an interactive histogram of the loaded events. The histogram is explicitly a bounded result view, not a full-volume metric. Collector heartbeats are hidden unless you filter on service `lev-heartbeat`.
 - **FastAPI + PostgreSQL** serve the app and persist checkpoints, deduplication keys, jobs, retained evidence and the audit trail. No Redis or Celery.
 - **Vector → Loki**, independently of PostgreSQL and AI. Loki stores raw evidence for 48 hours (`LOG_RETENTION_HOURS` in `.env`, minimum 24; collected events in PostgreSQL are pruned a day later); selected issue examples/context survive in PostgreSQL. Loki's compactor deletes asynchronously, so physical deletion is not exactly at hour 48.
 - **Jev** classifies category and actionability using typed Choice questions at `/v1/systemone`. Model/version, probabilities, confidence and the policy version are retained. The default `0.8` confidence gate is a starting setting, not a validated accuracy guarantee; tune it on your own labelled logs (below).
@@ -96,7 +96,7 @@ The application does **not contain an autonomous SSH executor**. Agent tasks and
 
 ![Sources page: collection settings and every Vector source with its heartbeat and services](screenshots/sources.png)
 
-The small ✕ next to a source, or next to one of its logs (services), hides it on the Sources page in this browser only; **Settings → Hidden sources and logs** unhides them. Hiding changes nothing in collection or triage.
+The small ✕ next to a source, or next to one of its logs (services), hides it on the Sources page and in the Fields columns, in this browser only; **Settings → Hidden sources and logs** unhides them. Hiding changes nothing in collection or triage.
 
 The central Compose stack now includes Vector for this host. It reads the persistent system journal through a read-only `/var/log` mount and watches `/var/log/apps/<service>/*.log` if those files exist. It forwards warnings/errors/fatal events and a collector heartbeat through Caddy to Loki, with a persistent disk buffer and journal checkpoints. Collection starts with new events rather than importing the whole journal.
 

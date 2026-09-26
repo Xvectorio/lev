@@ -199,18 +199,33 @@ def get_problem(conn, incident_id, lock=False):
     return item
 
 
+def incident_filter(status, category, minutes, samples, labels):
+    return f'''i.superseded_by IS NULL AND (%s OR NOT {SAMPLE_SQL}) AND i.labels @> %s
+            AND (%s='' OR i.status=%s) AND (%s='' OR i.category=%s)
+            AND (%s=0 OR i.last_ns >= (extract(epoch FROM now())::bigint - %s*60)*1000000000)''', \
+        (samples, Jsonb(labels), status, status, category, category, minutes, minutes)
+
+
 @app.get('/api/incidents')
-def incidents(service: str = '', status: str = '', category: str = '', minutes: int = Query(0, ge=0), offset: int = Query(0, ge=0), samples: bool = False):
+def incidents(service: str = '', server_id: str = '', project_id: str = '', status: str = '', category: str = '', minutes: int = Query(0, ge=0), offset: int = Query(0, ge=0), samples: bool = False):
+    labels = {k: v for k, v in {'service': service, 'server_id': server_id, 'project_id': project_id}.items() if v}
+    where, params = incident_filter(status, category, minutes, samples, labels)
     with db() as conn:
         return conn.execute(f'''SELECT *,first_ns::text AS first_ns,last_ns::text AS last_ns,count(*) OVER () AS total
-            FROM incidents i WHERE i.superseded_by IS NULL AND (%s OR NOT {SAMPLE_SQL})
-            AND (%s='' OR i.labels->>'service'=%s) AND (%s='' OR i.status=%s)
-            AND (%s='' OR i.category=%s)
-            AND (%s=0 OR i.last_ns >= (extract(epoch FROM now())::bigint - %s*60)*1000000000)
+            FROM incidents i WHERE {where}
             ORDER BY CASE i.status WHEN 'approved' THEN 0 WHEN 'proposed' THEN 1 WHEN 'ready' THEN 2
                 WHEN 'review' THEN 3 WHEN 'new' THEN 4 WHEN 'verifying' THEN 5 WHEN 'observing' THEN 6 ELSE 7 END,
-                i.last_ns DESC LIMIT 100 OFFSET %s''',
-            (samples, service, service, status, status, category, category, minutes, minutes, offset)).fetchall()
+                i.last_ns DESC LIMIT 100 OFFSET %s''', (*params, offset)).fetchall()
+
+
+@app.get('/api/incidents/tree')
+def incident_tree(status: str = '', category: str = '', minutes: int = Query(0, ge=0), samples: bool = False):
+    """Incident counts per project/server/service under the stage/category/time filters (label filters ignored)."""
+    where, params = incident_filter(status, category, minutes, samples, {})
+    with db() as conn:
+        return conn.execute(f'''SELECT i.labels->>'project_id' AS project_id, i.labels->>'server_id' AS server_id,
+            i.labels->>'service' AS service, count(*) AS count, count(*) FILTER (WHERE i.level IN ('error','fatal')) AS errors
+            FROM incidents i WHERE {where} GROUP BY 1,2,3''', params).fetchall()
 
 
 @app.get('/api/incidents/{incident_id}')

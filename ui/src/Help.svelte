@@ -15,6 +15,8 @@
       'If the problem comes back, the incident reopens as a new episode and earlier approvals are invalidated. Lev itself never runs commands.',
       '# Your verdict',
       'In an incident you can record where Jev should have routed it. Verdicts feed the Jev tune wizard and never change the incident.',
+      '# Fields',
+      'Fields counts incidents across all pages. Most affected services ranks services over every server; By source breaks them down per project and server. The bar is the share of its parent (or of all incidents), its red part the share at error level. Click a name to filter the list, click it again to remove the filter.',
     ]},
     logs: { title: 'Searching logs', body: [
       'Searches Loki, which keeps raw logs for 48 hours by default (LOG_RETENTION_HOURS). Only warn, error and fatal lines (plus a heartbeat, hidden unless you filter service=lev-heartbeat) are stored.',
@@ -23,12 +25,12 @@
       '- "quoted phrase" matches exactly.',
       '- NOT excludes the next term: error NOT healthcheck',
       '- field=value filters on a label: server_id, project_id, host, service, environment, level. Completed filters become chips; Backspace removes the last one.',
-      'Click a histogram bar to zoom into that time range, or a value under Fields to filter on it. The histogram covers the loaded events only, not total volume.',
+      'Click a histogram bar to zoom into that time range, or a name under Fields to filter on it (click again to remove). Fields ranks the most affected services and breaks the loaded events down per project, server and service. The histogram covers the loaded events only, not total volume.',
     ]},
     sources: { title: 'Sources and collection', body: [
       'Every server runs Vector, which reads journald, Docker and log files, joins stack traces, redacts secrets and forwards only warn+ lines plus a heartbeat once a minute. A source is live while its heartbeat is recent; incidents only resolve while their source is live.',
       'This Lev host already collects its own journal and /var/log/apps/<service>/*.log as server local.',
-      'The small ✕ next to a source or one of its logs hides it on this page (this browser only); Settings → Hidden sources and logs unhides them.',
+      'The small ✕ next to a source or one of its logs hides it here and in the Fields columns (this browser only); Settings → Hidden sources and logs unhides them.',
       'See the ? on Vector sources for adding a server, and on Connect for agents.',
     ]},
     collection: { title: 'How collection works', body: [
