@@ -595,6 +595,9 @@
     const start = params.get('start'), end = params.get('end');
     if (start && end && /^\d+$/.test(start) && /^\d+$/.test(end)) range = {start, end};
     if (range) { view = 'logs'; search(); } else loadIncidents();
+    // ?incident=<id>: the agent's hand-off link after a proposal.
+    const incident = params.get('incident');
+    if (incident && !range) openIncident(encodeURIComponent(incident));
     refreshStatus();
     timer = setInterval(() => {
       refreshStatus();

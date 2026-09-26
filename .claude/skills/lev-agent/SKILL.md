@@ -75,7 +75,7 @@ Then decide:
 - Reusing the same `request_id` + body is idempotent. Use a new `-p<n>` for a revised proposal.
 - `409 Stale incident generation` means it recurred and reopened, so fetch it again and re-assess.
 
-After POSTing, tell the user: incident id, one-line diagnosis, the changes, risk, and "approve in the Lev UI (Incidents → this incident)". Then **stop work on that incident.**
+After POSTing, tell the user: incident id, one-line diagnosis, the changes, risk, and the approval link `${LEV_URL:-http://localhost:8080}/?incident=<id>` (expand `LEV_URL`; it opens the incident in the Lev UI, where the user approves). Then **stop work on that incident.**
 
 ## 4. Apply an `approved` task
 

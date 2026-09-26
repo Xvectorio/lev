@@ -192,7 +192,7 @@ Proposal body:
 }
 ```
 
-The response includes the proposal `id`. Operator approval occurs in the UI and is bound to that exact proposal and generation. Agents should fetch the task immediately before execution and require `permissions.approved_proposal` to match. Approval authorizes only the listed changes; actual access and enforcement remain the external agent's responsibility.
+The response includes the proposal `id`. Operator approval occurs in the UI (`/?incident=<id>` opens that incident directly) and is bound to that exact proposal and generation. Agents should fetch the task immediately before execution and require `permissions.approved_proposal` to match. Approval authorizes only the listed changes; actual access and enforcement remain the external agent's responsibility.
 
 Verification body:
 

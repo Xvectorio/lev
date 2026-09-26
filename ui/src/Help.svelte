@@ -59,7 +59,7 @@
       'Watch files go in /etc/vector/watch.d/ and need no mounts, but the vector user must be able to read the files they watch. Docker container logs are not collected. Rerun a newer vector-install.sh to upgrade.',
     ]},
     connect: { title: 'Connecting agents', body: [
-      'Lev does not fix things itself. An external agent (e.g. Claude Code with the lev-agent skill) fetches ready tasks, investigates read-only, submits a proposal, waits for your approval, then applies it and reports every check.',
+      'Lev does not fix things itself. An external agent (e.g. Claude Code with the lev-agent skill) fetches ready tasks, investigates read-only, submits a proposal, waits for your approval (it prints a link that opens the incident here), then applies it and reports every check.',
       '- Copy the lev-agent skill folder to ~/.claude/skills/ on the machine that runs the agent.',
       '- Set LEV_URL to this Lev and LEV_AGENT_TOKEN to Copy agent token.',
       '$ /loop 30m /lev-agent',
