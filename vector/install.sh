@@ -45,7 +45,7 @@ if ! grep -q '^VECTOR_ENDPOINT=' /etc/default/vector 2>/dev/null; then
       '#   systemctl enable --now vector    # starts Vector now and at every boot' \
       '# After a later change to this file: systemctl restart vector. Logs: journalctl -u vector' \
       ''
-    sed -e '/^JOURNAL_GID=/d' -e '/^# JOURNAL_GID/d' -e 's/^VECTOR_CONTAINER_GLOB=.*/VECTOR_CONTAINER_GLOB=SELECT_CONTAINER_ID/' \
+    sed -e '/^JOURNAL_GID=/d' -e '/^# JOURNAL_GID/d' \
       "$tmp/.env.example"
   } > /etc/default/vector
 fi

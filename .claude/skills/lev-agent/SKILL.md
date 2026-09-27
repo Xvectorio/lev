@@ -123,7 +123,7 @@ All passed → `verifying`. Lev resolves it if nothing recurs for 15 minutes and
 
 - This repo (Lev itself): follow its `CLAUDE.md`. Everything runs in Docker; rebuild images after backend/ui edits.
 - Firewall/UFW incidents: a block alone is not a broken service. Never propose opening ports unless evidence shows intended traffic failing.
-- Demo/test incidents (`environment=demo`, `project_id=lev-test`) never appear in the agent task list; ignore any you see elsewhere.
+- Demo/test incidents (`environment=demo`, `project_id=lev-test`) never appear in the agent task list; ignore any you see elsewhere. Incidents from **Settings → Load test data** do appear (made-up hosts `web-01`, `app-01`, `db-01`, `worker-01`, `edge-01`, `stg-app-01`): don't investigate or propose, just tell the user.
 
 ## Report
 

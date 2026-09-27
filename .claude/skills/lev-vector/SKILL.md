@@ -38,7 +38,7 @@ sudo env VECTOR_HOST=test-host VECTOR_SERVER_ID=test-server VECTOR_PROJECT_ID=te
   sh -c '[ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector test /etc/vector/vector.yaml /etc/vector/watch.d/*.yaml'
 ```
 
-`/var/log` is already mounted at `/host/var/log`. Docker's containers dir is mounted at `/host/docker/containers` on source servers. On the central host, add mounts to the `vector` service in the untracked `compose.override.yaml` (create it if missing); add the containers dir there when you first watch a container. Any other path P gets `- P:/host/P:ro`.
+`/var/log` is already mounted at `/host/var/log`. Docker's containers dir is already mounted at `/host/docker/containers` (source servers and the central host). Any other path P gets `- P:/host/P:ro` on the `vector` service; on the central host that goes in the untracked `compose.override.yaml` (create it if missing).
 
 Validate and test (source server; on the central host `docker compose -f compose.tools.yaml run --rm vector-check` / `vector-test` do the same):
 
