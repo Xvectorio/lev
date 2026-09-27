@@ -4,7 +4,7 @@
 
 **Lev turns the warnings and errors from your servers into a short queue of incidents, triages them with AI, and only closes one when the fix is proven to hold, so small ops teams stop drowning in logs and stop re-fixing the same problem.**
 
-![The Lev incidents workspace: a "No space left on device" incident routed to ready, with its evidence and agent actions](docs/screenshots/incidents.png)
+![The Lev incidents workspace: stage counts, filters, most affected services and the incident queue](docs/screenshots/incidents.png)
 
 ## One incident, start to finish
 
@@ -55,9 +55,9 @@ Open http://localhost:8080 (or `http://<server>:8080`), enter the setup code and
 - **Safe log shipping.** Vector joins stack traces, redacts common secret formats and forwards only warnings and errors, with a disk buffer.
 - **Small footprint.** One `compose.yaml`: Svelte, FastAPI, PostgreSQL, Loki, Vector, Caddy. No Redis, no Celery. Automatic HTTPS, daily backups with a restore check, full audit trail.
 
-| Log explorer | Sources | Jev triage |
-|---|---|---|
-| ![Log explorer](docs/screenshots/log-explorer.png) | ![Sources](docs/screenshots/sources.png) | ![Jev triage overview](docs/screenshots/jev-triage.png) |
+| Log explorer | Sources | Jev triage | Settings |
+|---|---|---|---|
+| ![Log explorer](docs/screenshots/log-explorer.png) | ![Sources](docs/screenshots/sources.png) | ![Jev triage overview](docs/screenshots/jev-triage.png) | ![Settings](docs/screenshots/settings.png) |
 
 ## Documentation
 
