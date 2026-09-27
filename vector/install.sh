@@ -40,8 +40,14 @@ mkdir -p /etc/vector/watch.d /host/var
 # vector.yaml and watch files use the container's /host/var/log paths; the link keeps them identical here.
 [ -e /host/var/log ] || ln -s /var/log /host/var/log
 if ! grep -q '^VECTOR_ENDPOINT=' /etc/default/vector 2>/dev/null; then
-  sed -e '/^JOURNAL_GID=/d' -e '/^# JOURNAL_GID/d' -e 's/^VECTOR_CONTAINER_GLOB=.*/VECTOR_CONTAINER_GLOB=SELECT_CONTAINER_ID/' \
-    "$tmp/.env.example" > /etc/default/vector
+  { printf '%s\n' \
+      '# Read by the vector systemd service (native install). After setting the values below, start it:' \
+      '#   systemctl enable --now vector    # starts Vector now and at every boot' \
+      '# After a later change to this file: systemctl restart vector. Logs: journalctl -u vector' \
+      ''
+    sed -e '/^JOURNAL_GID=/d' -e '/^# JOURNAL_GID/d' -e 's/^VECTOR_CONTAINER_GLOB=.*/VECTOR_CONTAINER_GLOB=SELECT_CONTAINER_ID/' \
+      "$tmp/.env.example"
+  } > /etc/default/vector
 fi
 chmod 600 /etc/default/vector
 mkdir -p /etc/systemd/system/vector.service.d
