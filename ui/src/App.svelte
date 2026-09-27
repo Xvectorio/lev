@@ -115,7 +115,7 @@
     problemOffset = 0; loadIncidents();
   }
   const stages = ['new','review','ready','observing','proposed','approved','verifying','resolved'];
-  let rows = $state<Log[]>([]), incidents = $state<Incident[]>([]), selected = $state<Detail | null>(null);
+  let rows = $state<Log[]>([]), incidents = $state<Incident[]>([]), selected = $state<Detail | null>(null), seenProposal = $state('');
   let status = $state<Status | null>(null), error = $state(''), notice = $state('');
   let loading = $state(false), limited = $state(false), autoRefresh = $state(false), queuing = $state(false);
   let range = $state<{start: string; end: string} | null>(null);
@@ -237,6 +237,8 @@
     try {
       const next: Detail = await api('/incidents/' + id);
       if (next.id !== selected?.id) incidentVerdict = {route: next.label?.route ?? '', category: next.label?.category ?? next.category};
+      // The 15 s refresh may swap in a new proposal: remember the one on screen first so Approve can't approve an unread one.
+      if (next.id !== selected?.id || !seenProposal) seenProposal = next.proposal?.id ?? '';
       selected = next;
     }
     catch (e) { error = (e as Error).message; }
@@ -256,8 +258,10 @@
 
   // Browsers can't start a local CLI; copy a command to paste into a terminal in the Lev repo.
   async function copyAgentCommand(prompt: string) {
-    // Log text may carry terminal escape sequences (ESC, OSC, C1) that act on paste: keep only tab and newline.
-    const command = `claude '${prompt.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').replaceAll("'", `'\\''`)}'`;
+    // Log text may carry terminal escape sequences (ESC, OSC, C1): keep only tab and newline.
+    const bytes = new TextEncoder().encode(prompt.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ''));
+    // Base64 keeps log text out of shell syntax in every shell; plan mode means the agent asks before it acts.
+    const command = `claude --permission-mode plan "$(echo ${btoa(Array.from(bytes, b => String.fromCharCode(b)).join(''))} | base64 -d)"`;
     try { await copyText(command); notice = 'Claude Code command copied. Paste it in a terminal at the Lev repo root.'; }
     catch { error = 'Clipboard unavailable. Run: ' + command; }
   }
@@ -292,8 +296,13 @@
 
   async function approveFix() {
     if (!selected?.proposal) return;
+    if (selected.proposal.id !== seenProposal) {
+      seenProposal = selected.proposal.id;
+      error = 'Proposal changed since you opened it. Review this version, then approve again.';
+      return;
+    }
     try {
-      await api(`/incidents/${selected.id}/approve`, {method:'POST',headers:{'Content-Type':'application/json','X-Lev-Request':'1'},body:JSON.stringify({proposal_id:selected.proposal.id,generation:selected.generation})});
+      await api(`/incidents/${selected.id}/approve`, {method:'POST',headers:{'Content-Type':'application/json','X-Lev-Request':'1'},body:JSON.stringify({proposal_id:seenProposal,generation:selected.generation})});
       await openIncident(selected.id); await loadIncidents();
       notice='Proposal approved. The connected agent can fetch the exact approved changes.';
     } catch(e) {error=(e as Error).message;}
@@ -1057,7 +1066,7 @@
               <p class="muted">AI suggestions are hypotheses. Check the evidence before making changes.</p>
               <h3>Suggested checks</h3>
               <ul>{#each selected.suggested_checks as check}<li>{check}</li>{:else}<li>Waiting for analysis.</li>{/each}</ul>
-              {#if selected.proposal}<section class="proposal"><h3>Proposed fix <span>{selected.proposal.risk} risk</span></h3><p>{selected.proposal.diagnosis}</p><h4>Changes</h4><ul>{#each selected.proposal.changes as change}<li>{change}</li>{/each}</ul><h4>Acceptance checks</h4><ul>{#each selected.proposal.checks as check}<li>{check}</li>{/each}</ul><h4>Rollback</h4><p>{selected.proposal.rollback}</p>{#if selected.status==='proposed'}<button class="primary" onclick={approveFix}>Approve this exact proposal</button>{/if}</section>{:else}<div class="handoff"><h3>Ready for an agent</h3><p>Copy the task for your agent, or connect it through the task API. It can submit a diagnosis, concrete changes, acceptance checks and a rollback plan here.</p></div>{/if}
+              {#if selected.proposal}<section class="proposal"><h3>Proposed fix <span>{selected.proposal.risk} risk</span></h3><p>{selected.proposal.diagnosis}</p><h4>Changes</h4><ul>{#each selected.proposal.changes as change}<li>{change}</li>{/each}</ul><h4>Acceptance checks</h4><ul>{#each selected.proposal.checks as check}<li>{check}</li>{/each}</ul><h4>Rollback</h4><p>{selected.proposal.rollback}</p>{#if selected.status==='proposed'}<button class="primary" onclick={approveFix}>{selected.proposal.id === seenProposal ? 'Approve this exact proposal' : 'Proposal changed: mark as reviewed'}</button>{/if}</section>{:else}<div class="handoff"><h3>Ready for an agent</h3><p>Copy the task for your agent, or connect it through the task API. It can submit a diagnosis, concrete changes, acceptance checks and a rollback plan here.</p></div>{/if}
               {#if selected.verification}<h3>Verification results</h3>{#each selected.verification.checks as check}<details class="check-result"><summary>{check.passed?'Passed':'Failed'}: {check.check}</summary><pre>{check.evidence}</pre></details>{/each}{#if selected.status==='verifying'}<p class="notice">Checks passed. Watching for recurrence for 15 minutes before resolving.</p>{/if}{/if}
               <h3>Retained evidence</h3>
               {#each selected.evidence as sample}<a class="evidence" href={evidenceUrl(sample)}><time>{time(sample.ts_ns)}</time><code>{sample.message.slice(0, 500)}</code><span>View surrounding logs</span></a>{/each}

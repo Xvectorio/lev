@@ -45,6 +45,9 @@ transforms:
         stamp = string(prefix.ts) ?? ""
       }
       event_time = parse_timestamp(stamp, format: "%+") ?? timestamp(.timestamp) ?? now()
+      # A body timestamp is app-controlled: far off receive time it would land outside the collector's window. Use receive time.
+      age = to_unix_timestamp(now()) - to_unix_timestamp(event_time)
+      if age > 300 || age < -60 { event_time = now() }
       path = string(.file) ?? "journal"
       file_service = parse_regex(path, r'/apps/(?P<service>[^/]+)/') ?? {}
       service = string(.lev_service) ?? string(app.service) ?? string(file_service.service) ?? string(._SYSTEMD_USER_UNIT) ?? string(.SYSLOG_IDENTIFIER) ?? string(._SYSTEMD_UNIT) ?? "container"
@@ -71,7 +74,14 @@ transforms:
       # Header values (Basic/Digest credentials, every cookie) are redacted whole: quoted, or to end of line.
       msg = replace(msg, r'(?i)\b(?:proxy-)?authorization["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\r\n]+)', "[REDACTED]")
       msg = replace(msg, r'(?i)\b(?:set-)?cookie["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\r\n]+)', "[REDACTED]")
-      msg = replace(msg, r'(?i)(?:password|passwd|secret|token|api[_-]?key)["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s,;}"\']+)', "[REDACTED]")
+      # Key names may be prefixed or suffixed: SECRET_KEY, AWS_SECRET_ACCESS_KEY, db_password, access_token.
+      msg = replace(msg, r'(?i)[\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)(?:[_-]?(?:access[_-]?)?(?:key|token|id))?["\']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s,;}"\']+)', "[REDACTED]")
+      msg = replace(msg, r'(?i)--[\w-]*(?:password|passwd|secret|token|api[_-]?key)[\w-]*\s+[^\s-]\S*', "[REDACTED]")
+      msg = replace(msg, r'(?i)\b(?:password|identified\s+by)\s+\'[^\']*\'', "[REDACTED]")
+      msg = replace(msg, r'://[^\s/:@]*:[^\s/@]+@', "://[REDACTED]@")
+      msg = replace(msg, r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*', "[REDACTED]")
+      msg = replace(msg, r'\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})', "[REDACTED]")
+      msg = replace(msg, r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)', "[REDACTED]")
       # Retain IDs in the message body (after redaction, which may run to end of line), never in Loki labels.
       if exists(app.request_id) { msg = msg + " request_id=" + (to_string(app.request_id) ?? "") }
       if exists(app.order_id) { msg = msg + " order_id=" + (to_string(app.order_id) ?? "") }
@@ -147,7 +157,8 @@ tests:
               assert!(!contains(string!(.message), "abc123"))
               assert!(contains(string!(.message), "req-42"))
               assert!(!exists(.secret))
-              assert_eq!(.timestamp, t'2026-09-24T01:00:00Z')
+              # A stale body timestamp is replaced by receive time.
+              assert!(to_unix_timestamp(now()) - to_unix_timestamp!(.timestamp) < 60)
   - name: parse Docker log envelopes
     inputs:
       - insert_at: normalize
@@ -162,7 +173,7 @@ tests:
             source: |
               assert_eq!(.level, "error")
               assert!(contains(string!(.message), "database connection failed"))
-              assert_eq!(.timestamp, t'2026-09-24T01:01:00Z')
+              assert!(to_unix_timestamp(now()) - to_unix_timestamp!(.timestamp) < 60)
   - name: join exception continuations
     inputs:
       - insert_at: multiline
@@ -213,16 +224,34 @@ tests:
             source: |
               assert_eq!(.message, "Starting request\nValueError: bad input")
               assert_eq!(.level, "error")
-  - name: redact whole header values and quoted credentials
+  - name: redact Basic authorization headers
     inputs:
       - insert_at: normalize
         type: log
         log_fields:
           message: 'ERROR login failed Authorization: Basic dXNlcjpodW50ZXIy'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR") && !contains(m, "dXNlcjpodW50ZXIy"), m)
+  - name: redact whole cookie headers
+    inputs:
       - insert_at: normalize
         type: log
         log_fields:
           message: 'ERROR bad session Cookie: theme=dark; session=abc123secret'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR") && !contains(m, "abc123secret"), m)
+  - name: redact quoted passwords
+    inputs:
       - insert_at: normalize
         type: log
         log_fields:
@@ -233,8 +262,104 @@ tests:
           - type: vrl
             source: |
               m = string!(.message)
-              assert!(!contains(m, "dXNlcjpodW50ZXIy") && !contains(m, "abc123secret") && !contains(m, "horse") && !contains(m, "battery"), m)
-              assert!(contains(m, "failed") || contains(m, "bad session"))
+              assert!(contains(m, "ERROR") && !contains(m, "horse"), m)
+  - name: redact prefixed and suffixed key names
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR boot failed SECRET_KEY=s3kr1t AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI access_token: tok123 db_password=pw1'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR"), m)
+              assert!(!contains(m, "s3kr1t") && !contains(m, "wJalrXUtnFEMI") && !contains(m, "tok123") && !contains(m, "pw1"), m)
+  - name: redact URL credentials and CLI flags
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR connect postgres://app:hunter2@db:5432/app failed; retry with --password hunter3'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR"), m)
+              assert!(!contains(m, "hunter2") && !contains(m, "hunter3"), m)
+  - name: redact SQL passwords
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: "ERROR statement: ALTER ROLE app WITH PASSWORD 'hunter5'; CREATE USER x IDENTIFIED BY 'hunter6'"
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR"), m)
+              assert!(!contains(m, "hunter5") && !contains(m, "hunter6"), m)
+  - name: redact JWTs
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR rejected eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR"), m)
+              assert!(!contains(m, "eyJ"), m)
+  - name: redact provider tokens
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'ERROR rejected ghp_abcdefghijklmnopqrstuvwxyz0123456789 sk-ant-api03-abcdefghijklmnopqrstuv AKIAIOSFODNN7EXAMPLE'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR"), m)
+              assert!(!contains(m, "ghp_") && !contains(m, "sk-ant") && !contains(m, "AKIA"), m)
+  - name: redact PEM private keys
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: "ERROR bad key -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY----- loaded"
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "ERROR"), m)
+              assert!(!contains(m, "MIIEow"), m)
+  - name: common words near key names are kept
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: 'WARN model call hit max_tokens=4096 for tokenizer=gpt2 at postgres://db:5432/app'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: |
+              m = string!(.message)
+              assert!(contains(m, "max_tokens=4096") && contains(m, "tokenizer=gpt2") && contains(m, "postgres://db:5432/app"), m)
 
   - name: forward warnings through the final filter
     inputs:

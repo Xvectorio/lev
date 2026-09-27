@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -139,7 +140,9 @@ def complete_logs(query, start, end):
     if len(rows) < 5000:
         return rows
     if end - start <= 1:
-        raise RuntimeError('Over 4999 logs at one nanosecond; checkpoint held, split by service')
+        # Can't split further. Holding the checkpoint here would stall every server, so keep what Loki returned.
+        logging.warning('Over 4999 logs at one nanosecond (%s); ingested the first 5000, dropped the rest', start)
+        return rows
     middle = (start + end) // 2
     return complete_logs(query, start, middle) + complete_logs(query, middle, end)
 

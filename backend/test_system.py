@@ -51,12 +51,9 @@ def run():
         fake = lambda query, start, end, limit, direction: [{'ts_ns': t} for t in stored if start <= t < end][:limit]
         with patch.object(core, 'logs', side_effect=fake):
             assert len(core.complete_logs('q', 0, 20)) == 7000
-            stored = [10] * 5000
-            try:
-                core.complete_logs('q', 0, 20)
-                raise AssertionError('An unsplittable saturated nanosecond must hold the checkpoint')
-            except RuntimeError:
-                pass
+            # An unsplittable saturated nanosecond is ingested, not a checkpoint-holding error that stalls every server.
+            stored = [10] * 6000
+            assert len(core.complete_logs('q', 0, 20)) == 5000
         with core.db() as conn:
             old = {'host': 'fw-host', 'service': 'firewall'}
             for n, spt in enumerate(('1', '2')):

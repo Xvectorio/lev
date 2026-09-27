@@ -89,7 +89,7 @@ Find **every** log the thing writes, then add only what isn't already collected.
 
 For each new source:
 
-1. Read 20–50 real lines (`tail`). Find: the level format, whether multi-line stack traces occur, and any secrets or personal data the shared redaction misses. It covers bearer tokens and `password|secret|token|api_key|authorization|cookie` key=value.
+1. Read 20–50 real lines (`tail`). Find: the level format, whether multi-line stack traces occur, and any secrets or personal data the shared redaction misses. It covers bearer tokens, `Authorization`/`Cookie` headers, key=value or key: value where the key contains `password|passwd|secret|token|api_key|access_key|private_key` (so `SECRET_KEY`, `db_password`, `access_token` too), `--password x` style flags, SQL `PASSWORD '…'`/`IDENTIFIED BY '…'`, `user:pass@` in URLs, JWTs, `ghp_`/`github_pat_`/`sk-`/`xox?-`/`AKIA` tokens and single-message PEM private keys.
 2. Copy `template.yaml` from this skill to `watch.d/<thing>.yaml` and fill it in. Use real sample lines in the tests, with secrets replaced: at least one line that must reach Lev at the right level, and one routine line that must be dropped.
 3. Add read-only mounts for new paths (native: none, just check the `vector` user can read them).
 4. Validate and run the tests, and fix until both pass.
@@ -130,7 +130,7 @@ Use when writing or changing an app's logging so Lev groups, levels and triages 
 - JSON: put the traceback inside `message` (joined with `\n`). One event keeps it together.
 - Plain text: continuation lines must start with whitespace, `Traceback`, `Caused by:` or `SomethingError:`/`…Exception:`, and follow within 1.5 s. In `/var/log/apps` files, each new entry must start with a date or `{`.
 
-**Never log secrets or personal data.** Redaction is a safety net, not a filter. It only catches `Bearer …` and `password|passwd|secret|token|api_key|authorization|cookie` followed by `=`/`:`.
+**Never log secrets or personal data.** Redaction is a safety net, not a filter. It only catches the common formats listed in section B step 1; anything else (custom tokens, personal data) goes through.
 
 **Plain-text apps you can't change.** Prefer `logfmt` (`level=error msg="…"`), which is parsed natively. Otherwise use a fixed level prefix mapped in a watch file (e.g. `ERROR:logger:msg` → `.lev_level`).
 
