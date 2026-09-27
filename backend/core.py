@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -128,23 +129,29 @@ def logs(query, start, end, limit=500, direction='backward'):
                 data = {}
             labels = {key: stream['stream'].get(key, 'unknown')
                       for key in ('host', 'server_id', 'project_id', 'service', 'environment')}
+            # Truncated here so no caller holds more than events store (16,000 chars); raw is only the event identity.
             rows.append({'ts_ns': str(ts), 'labels': labels,
-                         'message': str(data.get('message', line)),
-                         'level': str(data.get('level', 'info')), 'raw': line})
+                         'message': str(data.get('message', line))[:16000],
+                         'level': str(data.get('level', 'info')), 'raw': line[:16000]})
     return sorted(rows, key=lambda row: int(row['ts_ns']), reverse=direction == 'backward')
 
 
 def complete_logs(query, start, end):
+    """Yields rows in [start, end) oldest first, in batches of at most 5000: saturated ranges are split, so a
+    caller that processes batch by batch holds one Loki page in memory however large the burst."""
     # Loki ranges are [start, end): the halves share `middle` as one's end and the other's start.
-    rows = logs(query, start, end, 5000, 'forward')
-    if len(rows) < 5000:
-        return rows
-    if end - start <= 1:
-        # Can't split further. Holding the checkpoint here would stall every server, so keep what Loki returned.
-        logging.warning('Over 4999 logs at one nanosecond (%s); ingested the first 5000, dropped the rest', start)
-        return rows
-    middle = (start + end) // 2
-    return complete_logs(query, start, middle) + complete_logs(query, middle, end)
+    pending = [(start, end)]
+    while pending:
+        low, high = pending.pop()
+        batch = logs(query, low, high, 5000, 'forward')
+        if len(batch) == 5000 and high - low > 1:
+            middle = (low + high) // 2
+            pending += [(middle, high), (low, middle)]  # the older half is popped first
+            continue
+        if len(batch) == 5000:
+            # Can't split further. Holding the checkpoint here would stall every server, so keep what Loki returned.
+            logging.warning('Over 4999 logs at one nanosecond (%s); ingested the first 5000, dropped the rest', low)
+        yield batch
 
 
 def fingerprint(row):
@@ -161,14 +168,33 @@ def fingerprint(row):
     pattern = re.sub(r'\b(?:request_id|order_id|pid)=[\w-]+', '<id>', pattern)
     pattern = re.sub(r'\b[0-9a-f]{12,}\b', '<hex>', pattern)
     pattern = re.sub(r'\b\d+(?:\.\d+)?(?:ns|µs|us|ms|s)\b', '<dur>', pattern)
+    # Client IPs, query strings, numeric path segments and long numbers vary per request: one incident, not one each.
+    pattern = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '<ip>', pattern)
+    pattern = re.sub(r'\?[^\s"\'=]*=[^\s"\']*', '?<query>', pattern)
+    pattern = re.sub(r'/\d+(?=[/\s"\'?]|$)', '/<n>', pattern)
+    pattern = re.sub(r'\b\d{6,}\b', '<n>', pattern)
     pattern = re.sub(r'^(?:time="[^"]*"|\d{4}-\d\d-\d\d[T ][\d:.+Z-]+)\s*', '', pattern)
     return digest([row['labels'], pattern]), pattern
 
 
+NEW_INCIDENTS_PER_HOUR = 100  # per source (label set); more distinct messages share one overflow incident
+OVERFLOW = 'Over 100 new incidents from this source in an hour; further new messages are grouped here'
+
+
 def ingest(conn, rows):
-    grouped = {}
+    grouped, recent = {}, {}
     for row in rows:
         incident_id, pattern = fingerprint(row)
+        if not conn.execute('SELECT 1 FROM incidents WHERE id=%s', (incident_id,)).fetchone():
+            # Caps incidents (and paid triage) a source can create with random text such as scanned URLs.
+            source = json.dumps(row['labels'], sort_keys=True)
+            if source not in recent:
+                recent[source] = conn.execute('SELECT count(*) AS n FROM incidents WHERE labels=%s AND first_ns>%s',
+                    (Jsonb(row['labels']), time.time_ns() - 3600 * NS)).fetchone()['n']
+            if recent[source] >= NEW_INCIDENTS_PER_HOUR:
+                incident_id, pattern = digest([row['labels'], OVERFLOW]), OVERFLOW
+            else:
+                recent[source] += 1
         event_id = digest([row['labels'], row['ts_ns'], row['raw']])
         ts = int(row['ts_ns'])
         conn.execute('''INSERT INTO incidents(id, labels, pattern, first_ns, last_ns)

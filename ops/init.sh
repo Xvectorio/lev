@@ -8,6 +8,11 @@ put() { [ -s "$1" ] || printf %s "${2:-$(head -c 32 /dev/urandom | base64 | tr -
 put postgres_password "${POSTGRES_PASSWORD:-}"
 put vector_password "${VECTOR_PASSWORD:-}"
 put agent_token "${AGENT_TOKEN:-}"
-[ -s vector_hash ] || caddy hash-password --plaintext "$(cat vector_password)" > vector_hash
+# The ingest password is 32 random bytes, so bcrypt cost 4 loses nothing and keeps each push cheap to check.
+# Read from stdin, not argv (visible in ps). Older installs' cost-14 hashes are replaced.
+case "$(cat vector_hash 2>/dev/null)" in
+    '$2a$04$'*) ;;
+    *) { cat vector_password; echo; } | caddy hash-password --bcrypt-cost 4 > vector_hash ;;
+esac
 chown 65534:65534 ./* && chmod 400 ./*
 echo 'Secrets ready.'

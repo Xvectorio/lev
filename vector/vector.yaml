@@ -51,6 +51,8 @@ transforms:
       path = string(.file) ?? "journal"
       file_service = parse_regex(path, r'/apps/(?P<service>[^/]+)/') ?? {}
       service = string(.lev_service) ?? string(app.service) ?? string(file_service.service) ?? string(._SYSTEMD_USER_UNIT) ?? string(.SYSLOG_IDENTIFIER) ?? string(._SYSTEMD_UNIT) ?? "container"
+      # service becomes a Loki label and may come from the log body: keep it short and plain so it can't mint streams at will.
+      service = truncate(replace(service, r'[^A-Za-z0-9._@:-]', "_"), 64)
       kv = parse_logfmt(msg) ?? {}
       level = downcase(string(.lev_level) ?? string(app.level) ?? string(app.severity) ?? string(kv.level) ?? "")
       if level == "warning" { level = "warn" }
@@ -103,6 +105,8 @@ transforms:
     source: |
       # The reduce keeps the head line's level; an exception merged under an info head must not be dropped.
       if (.level == "info" || .level == "debug") && match(string!(.message), r'(?m)^(?:Traceback|Caused by:|[A-Za-z.]+(?:Error|Exception):)') { .level = "error" }
+      # Lev stores 16,000 characters per event; bigger lines only cost Loki and collector memory.
+      .message = truncate(string!(.message), 16000)
   # Per-server overrides: watch.d/local.vrl (outside releases) may change .level or abort to drop; default is a no-op.
   local:
     type: remap
@@ -360,6 +364,18 @@ tests:
             source: |
               m = string!(.message)
               assert!(contains(m, "max_tokens=4096") && contains(m, "tokenizer=gpt2") && contains(m, "postgres://db:5432/app"), m)
+
+  - name: service label is sanitized and truncated
+    inputs:
+      - insert_at: normalize
+        type: log
+        log_fields:
+          message: '{"service":"shop {x=y} aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","level":"error","message":"boom"}'
+    outputs:
+      - extract_from: normalize
+        conditions:
+          - type: vrl
+            source: 'match(string!(.service), r''^[A-Za-z0-9._@:-]{1,64}$'') && starts_with(string!(.service), "shop_")'
 
   - name: forward warnings through the final filter
     inputs:

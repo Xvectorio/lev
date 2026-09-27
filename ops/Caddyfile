@@ -1,5 +1,4 @@
-# http://edge: the bundled vector pushes to http://edge:80 whatever SITE_ADDRESS is.
-{$SITE_ADDRESS}, http://edge {
+(site) {
     encode zstd gzip
     header {
         X-Content-Type-Options nosniff
@@ -20,5 +19,21 @@
         root * /srv
         try_files {path} /index.html
         file_server
+    }
+}
+{$SITE_ADDRESS} {
+    # Browsers ignore HSTS over plain HTTP, so this only takes effect once SITE_ADDRESS serves HTTPS.
+    header Strict-Transport-Security "max-age=31536000"
+    import site
+}
+# The bundled vector pushes to http://edge:80 whatever SITE_ADDRESS is. Only private addresses may use it,
+# so an HTTPS install isn't also served over plain HTTP to the internet via Host: edge.
+http://edge {
+    @internal remote_ip private_ranges
+    handle @internal {
+        import site
+    }
+    handle {
+        abort
     }
 }
