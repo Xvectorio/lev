@@ -366,6 +366,8 @@ def save_settings(body: dict[str, str], request: Request):
     # Only keys sent are changed; an empty string drops the override so the .env value applies again.
     if not body or set(body) - set(SETTINGS) or any(len(v) > 2000 for v in body.values()):
         raise HTTPException(422, 'Unknown or oversized setting')
+    if not re.fullmatch(r'\d{0,9}', body.get('JEV_DAILY_LIMIT', '').strip()):
+        raise HTTPException(422, 'The daily Jev limit must be a whole number (0 = no limit)')
     with db() as conn:
         conn.execute("""INSERT INTO settings(name,value) VALUES ('config','{}') ON CONFLICT DO NOTHING""")
         conn.execute("""UPDATE settings SET value=(value || %s) - %s::text[] WHERE name='config'""",

@@ -182,6 +182,10 @@ def run():
             assert core.setting('AI_API_KEY') == 'sk-ui' and core.setting('AI_MODEL') == 'm1'
             assert client.post('/api/settings', headers=admin, json={'AI_MODEL': ''}).json()['AI_MODEL'] == {'value': ''}, 'Clearing falls back to env'
             assert client.post('/api/settings', headers=admin, json={'BIND_ADDRESS': 'x'}).status_code == 422
+            assert client.post('/api/settings', headers=admin, json={'JEV_DAILY_LIMIT': 'lots'}).status_code == 422
+            assert client.post('/api/settings', headers=admin, json={'JEV_DAILY_LIMIT': '250'}).json()['JEV_DAILY_LIMIT'] == {'value': '250'}
+            assert core.setting('JEV_DAILY_LIMIT') == '250', 'The daily limit is editable in Settings'
+            client.post('/api/settings', headers=admin, json={'JEV_DAILY_LIMIT': ''})
             client.post('/api/settings', headers=admin, json={'AI_API_KEY': ''})
             assert client.get('/api/status').status_code == 401
             assert client.get('/api/status', headers={'X-Authenticated-User': 'forged'}).status_code == 401

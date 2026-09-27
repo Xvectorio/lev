@@ -73,7 +73,7 @@
       '- investigate ≥ ready gate → ready',
       '- observe ≥ observe gate → observing',
       '- otherwise → review, so uncertain cases reach a human instead of being guessed.',
-      'An optional AI text model (Settings) then writes the summary and suspected cause. Pausing stops provider calls only; collection continues and jobs wait. Each triage costs Jev credits; JEV_DAILY_LIMIT in .env (default 1000 a day) caps them, after which jobs wait.',
+      'An optional AI text model (Settings) then writes the summary and suspected cause. Pausing stops provider calls only; collection continues and jobs wait. Each triage costs Jev credits; the daily limit in Settings (default 1000 a day, from JEV_DAILY_LIMIT in .env) caps them, after which jobs wait.',
       'Activity shows, for the chosen timeframe, the log lines collected, incidents triaged, Jev calls, input tokens and an estimated cost at the TypeSafe list price (input tokens only; output is free). Many lines share one incident, so calls stay far below lines.',
       'The question wording, categories and gates are the policy (Policy tab). Improve it with your verdicts in the Tune wizard.',
     ]},

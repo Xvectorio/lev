@@ -23,7 +23,7 @@
   });
   let view = $state<'logs' | 'incidents' | 'sources' | 'jev' | 'settings'>('incidents');
   // Runtime settings: secrets come back only as {set}; a blank secret field keeps the stored key.
-  const SETTING_LABELS: Record<string, string> = {TYPESAFE_API_KEY: 'TypeSafe API key (Jev triage)', AI_API_KEY: 'Explanations API key', AI_MODEL: 'Explanations model (empty = off)'};
+  const SETTING_LABELS: Record<string, string> = {TYPESAFE_API_KEY: 'TypeSafe API key (Jev triage)', AI_API_KEY: 'Explanations API key', AI_MODEL: 'Explanations model (empty = off)', JEV_DAILY_LIMIT: 'Daily Jev triage limit (0 = no limit)'};
   let appSettings = $state<Record<string, {secret?: boolean; set?: boolean; value?: string}>>({});
   let settingsForm = $state<Record<string, string>>({});
   async function loadSettings() {
@@ -779,7 +779,7 @@
           {#each Object.entries(appSettings) as [name, s] (name)}
             <label>{SETTING_LABELS[name] ?? name}
               {#if s.secret}<input type="password" autocomplete="off" bind:value={settingsForm[name]} maxlength="2000" placeholder={s.set ? '•••••••• set, type to replace' : 'not set'}>
-              {:else}<input autocomplete="off" spellcheck="false" bind:value={settingsForm[name]} maxlength="2000">{/if}
+              {:else}<input autocomplete="off" spellcheck="false" bind:value={settingsForm[name]} maxlength="2000" inputmode={name === 'JEV_DAILY_LIMIT' ? 'numeric' : undefined}>{/if}
               <button type="button" onclick={() => saveSettings(name)}>Clear {s.secret ? 'saved key' : 'override'}</button>
             </label>
           {/each}

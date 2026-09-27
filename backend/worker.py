@@ -203,11 +203,11 @@ def chat_json(system, user, key, timeout):
 
 def over_daily_limit(conn):
     # Caps provider spend however many incidents arrive; jobs wait (and the Jev page says why) until the window moves on.
-    limit = int(os.getenv('JEV_DAILY_LIMIT', '1000'))
+    limit = int(setting('JEV_DAILY_LIMIT', conn) or '1000')  # Settings page, else .env
     used = conn.execute('''SELECT (SELECT count(*) FROM jobs WHERE completed_at>now()-interval '1 day')
         + (SELECT count(*) FROM replays WHERE completed_at>now()-interval '1 day') AS n''').fetchone()['n']
     if limit and used >= limit:
-        state(conn, 'analyzer', f'Daily Jev limit reached ({limit} triages in 24 hours, JEV_DAILY_LIMIT); jobs wait')
+        state(conn, 'analyzer', f'Daily Jev limit reached ({limit} triages in 24 hours; change it in Settings); jobs wait')
         return True
     return False
 
