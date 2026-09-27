@@ -37,6 +37,7 @@ services:
       - "${BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-8443}:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      BIND_ADDRESS: ${BIND_ADDRESS:-0.0.0.0}  # only for the plain-HTTP warning
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
     volumes:
       - secrets:/run/lev:ro

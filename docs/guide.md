@@ -232,7 +232,7 @@ Return a result for **every** approved check. Failed checks return the issue to 
 
 ## HTTPS and access
 
-Lev listens on all interfaces, over HTTP on port 8080, by default; set `BIND_ADDRESS=127.0.0.1` to keep it reachable from the server only. With HTTPS, Lev sends HSTS, and the internal `http://edge` address the bundled Vector uses answers only private (RFC 1918/loopback) addresses. Docker-published ports bypass host firewalls such as UFW, so on an internet-facing host restrict access at the network edge or with `BIND_ADDRESS`.
+Lev listens on all interfaces, over HTTP on port 8080, by default; set `BIND_ADDRESS=127.0.0.1` to keep it reachable from the server only. In that default the edge logs a warning at startup (`docker compose logs edge`), since passwords, the session cookie, the ingest password and the agent token then cross the network unencrypted. With HTTPS, Lev sends HSTS, and the internal `http://edge` address the bundled Vector uses answers only private (RFC 1918/loopback) addresses. Docker-published ports bypass host firewalls such as UFW, so on an internet-facing host restrict access at the network edge or with `BIND_ADDRESS`.
 
 For HTTPS, point a DNS name at the server and set in `.env`:
 
