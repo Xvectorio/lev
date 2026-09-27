@@ -96,7 +96,8 @@
       '- 4 · Wrong categories need better wording, not gates: edit the policy or ask AI for suggestions.',
       '- 5 · Test a saved version against your verdicts before activating it. Costs one Jev call per incident per version and only runs while no live triage is waiting.',
     ]},
-    settings: { title: 'AI providers', body: [
+    settings: { title: 'Settings', body: [
+      '# AI providers',
       'Values saved here override .env; clear one to fall back to it. Keys are stored in the database and never shown again.',
       '- TypeSafe API key: required for Jev triage. Without it jobs stay queued.',
       '- AI key / model: any OpenAI-compatible endpoint for incident explanations and policy suggestions. Optional.',
@@ -109,6 +110,14 @@
       '- LOG_RETENTION_HOURS (default 48, minimum 24): raw logs in Loki and the longest search range. Collected incident evidence is pruned a day later; incident examples, verdicts and audit are kept.',
       '- BACKUP_RETENTION_DAYS (default 14): daily database dumps in backups/.',
       'Incidents, verdicts and audit stay in PostgreSQL until you delete them.',
+      '# Security and scope',
+      'Lev is built for a private network or trusted users. It never runs commands, treats logs as untrusted data, redacts common secret formats on the source, and only changes a system through an agent after you approve that exact proposal. Deliberately not covered, to keep it small:',
+      '- Every account is a full admin (approve, settings, delete all data); no roles, MFA or SSO.',
+      '- Source servers are trusted: they share one ingest password and can send logs under any server or project.',
+      '- The agent token is shared and can act on any incident. Approval is a record, not a sandbox: what an agent can touch is up to the access you give it.',
+      '- Each triage sends labels and a few dozen redacted log lines to TypeSafe (and the optional AI model). A crafted log line can steer triage, never run anything.',
+      '- No encryption at rest (database, logs, backups, saved keys), plain HTTP until you set a domain, one server, and not a SIEM or compliance log store.',
+      'Details: the Security model and scope section of docs/guide.md.',
     ]},
   };
 </script>

@@ -17,6 +17,10 @@
 
 Lev itself never runs commands or treats log text as instructions.
 
+## Who it's for
+
+Developers and small teams who run their own software and servers and want its problems tracked without watching logs: AI triage and agents bring what matters to your attention and prepare fixes, and you decide. Lev assumes a private network or trusted users: every account is a full admin, source servers and agents are trusted, and log excerpts go to the AI provider. See [Security model and scope](docs/guide.md#security-model-and-scope) for what is and isn't covered.
+
 ## Try it with sample data
 
 After the quick start below, open **Settings → Data → Load test data**. It writes an hour of realistic logs from six made-up servers (a database connection storm, a rotated password, a filling disk, a broken staging deploy, firewall noise) and turns them into about 35 incidents. With a TypeSafe API key set, Jev triages them right away; without one, they wait in the queue.
@@ -46,9 +50,9 @@ Open http://localhost:8080 (or `http://<server>:8080`), enter the setup code and
 - **Incidents, not log lines.** Repeats are fingerprinted (IDs, UUIDs, durations normalized) into one incident with a count.
 - **Confidence-gated AI triage.** Jev makes typed, scored judgments on category and actionability. You edit the policy as versioned text and tune the gates against your own verdicts, without extra AI calls.
 - **Verified resolution.** Propose, approve, apply, observe. An incident is resolved only when the problem stays gone.
-- **Agent-ready, human-approved.** A scoped agent API and a Claude Code skill do the legwork; approval stays with an operator.
+- **Agent-ready, human-approved.** A separate agent API and a Claude Code skill do the legwork; approval stays with an operator.
 - **Log explorer.** Search, field filters and a histogram over recent warn/error/fatal logs.
-- **Safe log shipping.** Vector joins stack traces, redacts secrets and forwards only warnings and errors, with a disk buffer.
+- **Safe log shipping.** Vector joins stack traces, redacts common secret formats and forwards only warnings and errors, with a disk buffer.
 - **Small footprint.** One `compose.yaml`: Svelte, FastAPI, PostgreSQL, Loki, Vector, Caddy. No Redis, no Celery. Automatic HTTPS, daily backups with a restore check, full audit trail.
 
 | Log explorer | Sources | Jev triage |
@@ -57,7 +61,7 @@ Open http://localhost:8080 (or `http://<server>:8080`), enter the setup code and
 
 ## Documentation
 
-The [operator guide](docs/guide.md) covers everything else: how the pipeline works, accounts and upgrades, adding log sources, the agent API, retention and reliability limits, HTTPS, backups and development.
+The [operator guide](docs/guide.md) covers everything else: how the pipeline works, accounts and upgrades, adding log sources, the agent API, retention and reliability limits, the security model, HTTPS, backups and development.
 
 ## License
 

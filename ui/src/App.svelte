@@ -679,7 +679,7 @@
       <button class:active={view === 'incidents'} onclick={() => switchView('incidents')}><span aria-hidden="true">▤</span> Incidents <span class="count">{status?.incidents ?? '—'}</span></button>
       <button class:active={view === 'sources'} onclick={() => switchView('sources')}><span aria-hidden="true">⇄</span> Sources</button>
       <button class:active={view === 'jev'} onclick={() => switchView('jev')}><span aria-hidden="true">◈</span> Jev triage</button>
-      <button class:active={view === 'settings'} onclick={() => switchView('settings')}><span aria-hidden="true">⚙</span> Settings</button>
+      <button class:active={view === 'settings'} onclick={() => switchView('settings')}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M19.2 10.2L22.1 10.6L22.1 13.4L19.2 13.8L18.3 15.8L20.1 18.1L18.1 20.1L15.8 18.3L13.8 19.2L13.4 22.1L10.6 22.1L10.2 19.2L8.2 18.3L5.9 20.1L3.9 18.1L5.7 15.8L4.8 13.8L1.9 13.4L1.9 10.6L4.8 10.2L5.7 8.2L3.9 5.9L5.9 3.9L8.2 5.7L10.2 4.8L10.6 1.9L13.4 1.9L13.8 4.8L15.8 5.7L18.1 3.9L20.1 5.9L18.3 8.2ZM15.2 12A3.2 3.2 0 1 0 8.8 12A3.2 3.2 0 1 0 15.2 12Z"/></svg> Settings</button>
     </nav>
     <div class="pipeline">
       <h2>Pipeline</h2>

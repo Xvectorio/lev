@@ -1,6 +1,6 @@
 # Lev operator guide
 
-The in-depth reference for running Lev: how the pipeline works, installation and accounts, log sources, the agent API, reliability limits, HTTPS, backups and development. For a short introduction and quick start, see the [README](../README.md).
+The in-depth reference for running Lev: how the pipeline works, installation and accounts, log sources, the agent API, reliability limits, the security model, HTTPS, backups and development. For a short introduction and quick start, see the [README](../README.md).
 
 **Everything runs in Docker**, including builds, tests and Vector on source servers. The host needs Docker Engine and Compose only. No host Python packages, Node packages, database, web server or Vector installation is needed. The one exception: a source server without Docker can run Vector as a native systemd service ([Without Docker](#source-server-without-docker)).
 
@@ -239,6 +239,30 @@ Return a result for **every** approved check. Failed checks return the issue to 
 - Database uniqueness prevents duplicate stored jobs/results. Jev output is checkpointed before optional prose generation; a retry routes with the policy version that classification was made under, and a prose provider failure falls back to the default explanation instead of blocking triage. A crash between a provider response and its database commit can still repeat a provider call; provider-side exactly-once billing is not promised.
 - Rate limits and outages retry with bounded backoff. Invalid credentials/schema responses become visible failed jobs. Collection runs in a separate thread and never waits for a model.
 - The deployment is a single central server, without HA. Monitor its disk space, source buffering and worker status.
+
+## Security model and scope
+
+Lev is built for developers and small teams who run their own software and servers, on a private network or with a few trusted operators. It turns their warnings and errors into a short, manageable queue, lets AI triage it, and lets agents bring what matters to their attention and prepare fixes for them to approve. Its protections fit that setting. It deliberately leaves out features that only matter for hostile networks, untrusted users or compliance, to keep it small enough to run and understand.
+
+**What Lev protects:**
+
+- **Nothing runs on its own.** Lev never executes commands and has no executor. An agent changes a system only after an operator approves that exact proposal for that episode; a recurrence voids the approval.
+- **Logs are untrusted data.** Triage prompts say so, Jev can only answer with fixed options, and AI-written checks containing URLs or shell pipes are dropped. Tasks label the AI summary and checks as hints, not instructions.
+- **Secrets are redacted on the source**, before the disk buffer, and only warn/error/fatal lines and whitelisted fields leave the server ([details](#add-a-source-server)).
+- **Operator access.** One-time setup code, scrypt password hashes, per-address login rate limit, HttpOnly SameSite=Strict session cookie, a CSRF header on every change, a strict Content-Security-Policy, and HSTS once HTTPS is on. PostgreSQL, Loki and the API publish no ports. Proposals, approvals, dismissals, verifications, agent notes, reopenings and resolutions are in the audit trail with their actor.
+- **Separate credentials.** The ingest password can only push logs; the agent token cannot approve.
+
+**Not covered, on purpose:**
+
+- **No roles, MFA or SSO.** Every account is a full admin: it can approve fixes, change settings and delete all data. Give accounts only to people you trust with your servers.
+- **Sources are trusted.** All servers share one ingest password, and a server can send logs under any `server_id` or `project_id`. A compromised source can inject or impersonate logs. There are no per-source credentials and no built-in rotation.
+- **The agent token is shared and trusted.** It can read every incident's evidence and propose, dismiss, verify or note any incident; `server_id` only filters the task list. Keep it to agents you run yourself.
+- **Lev cannot enforce what an agent does.** Approval is a record, not a sandbox. What an agent may touch depends on the access you give it, and Lev records its check results as reported. The recurrence and heartbeat checks are Lev's only independent evidence.
+- **Log excerpts leave your network.** Each triage sends TypeSafe the incident's labels, up to 3 example lines and up to 30 lines from the surrounding minute; the optional text model gets the same. Redaction is pattern-based, so unknown secret formats pass through. Point `AI_BASE_URL` at a self-hosted model to keep explanations local; Jev itself is a hosted service (pause it to stop all calls).
+- **A crafted log line can still steer triage** (its category, route or AI summary). It cannot run anything, and a wrong `ready` still needs your approval before anything changes.
+- **No encryption at rest.** The database, Loki volume and backups hold logs and the API keys saved in Settings in clear.
+- **Plain HTTP by default** (see below), a single server without HA, and no hardening for hostile internet exposure beyond the above.
+- **Not a SIEM or audit log store.** Only warnings and errors are kept, raw logs for 48 hours by default, with no tamper-proof archive. Don't rely on Lev for compliance or forensics.
 
 ## HTTPS and access
 
