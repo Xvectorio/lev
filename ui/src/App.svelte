@@ -71,6 +71,10 @@
   // Fields tree nodes the viewer opened or closed (projects start collapsed, servers open); this browser only.
   let fieldsOpen = $state<Record<string, boolean>>((() => { try { return JSON.parse(localStorage.getItem('lev-fields-open') ?? '{}'); } catch { return {}; } })());
   $effect(() => { try { localStorage.setItem('lev-fields-open', JSON.stringify(fieldsOpen)); } catch {} });
+  // Plain HTTP from another machine sends credentials unencrypted. Dismissed once, it stays hidden in this browser.
+  const plainHttp = location.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|\[::1\]|.*\.localhost)$/.test(location.hostname);
+  let httpDismissed = $state((() => { try { return localStorage.getItem('lev-http-warning') === 'dismissed'; } catch { return false; } })());
+  function dismissHttpWarning() { httpDismissed = true; try { localStorage.setItem('lev-http-warning', 'dismissed'); } catch {} }
   const sourceKey = (s: Source) => `${s.project_id}/${s.server_id}`;
   const sourceRows = $derived.by(() => {
     const terms = [...sourceText.toLowerCase().matchAll(/(not\s+)?(?:(\w+)=)?("[^"]*"?|\S+)?/g)]
@@ -640,11 +644,16 @@
 {/snippet}
 {#snippet mark()}<svg class="brand-mark" viewBox="0 0 48 32" aria-hidden="true"><g fill="#19564f"><rect width="6.7" height="6.5" rx="1.2"/><rect y="10.3" width="6.7" height="6.5" rx="1.2"/><rect y="20.5" width="6.7" height="6.5" rx="1.2"/><rect x="10" y=".4" width="29.6" height="5.6" rx="1.2"/><rect x="10" y="10.6" width="22.3" height="5.6" rx="1.2"/><rect x="10" y="20.8" width="9.5" height="5.6" rx="1.2"/></g><path d="M24.5 22l5.3 5.5L44 12.5" fill="none" stroke="#1ca66a" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{/snippet}
 
+{#snippet httpWarning()}
+  <!-- type="button": on the login page this sits inside the form and must not submit it. -->
+  {#if plainHttp && !httpDismissed}<div class="alert" role="status"><span>Lev is served over plain HTTP: passwords, the session cookie, the ingest password and the agent token cross the network unencrypted. Set <code>SITE_ADDRESS</code> in <code>.env</code> for HTTPS.</span><button type="button" onclick={dismissHttpWarning}>Dismiss</button></div>{/if}
+{/snippet}
 {#if !auth?.user}
 <main class="auth-page">
   <form class="auth-card" onsubmit={submitAuth} aria-busy={!auth}>
     <p class="brand">{@render mark()} LEV</p>
     <p class="brand-sub">LOG EVENT VERIFIER</p>
+    {@render httpWarning()}
     {#if !auth}<p class="muted">Loading…</p>{:else}
     <h1>{auth.setup_required ? 'Create admin account' : 'Log in'}</h1>
     {#if auth.setup_required}
@@ -689,6 +698,7 @@
       <div><p class="breadcrumb">Infrastructure / {view === 'logs' ? 'Explore' : view === 'sources' || view === 'jev' || view === 'settings' ? 'Administer' : 'Investigate'}</p><h1>{view === 'logs' ? 'Log explorer' : view === 'sources' ? 'Sources' : view === 'jev' ? 'Jev triage' : view === 'settings' ? 'Settings' : 'Incidents'} <Help topic={view === 'jev' ? (jevTab === 'overview' ? 'jev' : jevTab) : view} /></h1></div>
       <div class="page-controls"><label class="refresh"><input type="checkbox" bind:checked={autoRefresh}> Refresh every 15s</label><button onclick={logout} title="Log out {auth.user}">Log out</button></div>
     </header>
+    {@render httpWarning()}
     {#if error}<div class="alert" role="alert">{error} <button onclick={reload}>Retry</button></div>{/if}
     {#if notice}<p class="notice" role="status">{notice}</p>{/if}
 
