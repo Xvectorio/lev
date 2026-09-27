@@ -5,7 +5,7 @@
   type Labels = { host: string; server_id: string; project_id: string; service: string; environment: string };
   type Log = { ts_ns: string; labels: Labels; message: string; level: string };
   type Incident = { id: string; labels: Labels; pattern: string; occurrences: number; first_ns: string; last_ns: string; level: string | null; summary: string | null; suspected_cause: string | null; suggested_checks: string[]; analyzed_at: string | null; status: string; category: string; generation: number; total: number; triage: {model: string; answers: {category: {choice: string; confidence: number}; actionability: {choice: string; confidence: number}}} | null; proposal: {id: string; diagnosis: string; changes: string[]; checks: string[]; rollback: string; risk: string} | null; verification: {checks: {check: string; passed: boolean; evidence: string}[]} | null };
-  type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string}}[]; label: {route: string; category: string | null; actor: string; at: string} | null };
+  type Detail = Incident & { evidence: Log[]; analyses: { id: string; status: string; attempts: number; error: string | null; created_at: string }[]; audit: {id: number; at: string; actor: string; action: string; data: {reason?: string; text?: string}}[]; label: {route: string; category: string | null; actor: string; at: string} | null };
   type Status = { incidents: number; jev_configured: boolean; explanations_configured: boolean; categories: string[]; retention_h: number; backup_retention_days: number; problems: {status: string; count: number}[]; workers: {name: string; heartbeat: string; checkpoint_ns: string; error: string | null}[]; jobs: {status: string; count: number}[] };
   type Source = { project_id: string; server_id: string; host: string; environment: string; services: Record<string, number>; events_24h: number; last_heartbeat_ns: string | null };
   type JevJob = { id: string; incident_id: string; status: string; attempts: number; error: string | null; created_at: string; completed_at: string | null; next_attempt: string; triage: Incident['triage']; labels: Labels; title: string };
@@ -106,6 +106,8 @@
   }
   // Incidents: counted server-side over all pages (stage/category/severity/time filters apply, label filters don't).
   let incidentTree = $state<TreeRow[]>([]), project = $state(''), server = $state('');
+  type AgentEvent = { id: number; incident_id: string; at: string; action: string; status: string; labels: Labels; title: string; text: string | null };
+  let agentActivity = $state<AgentEvent[]>([]);
   const incidentFields = $derived(buildFields(incidentTree));
   function pickSource(p: string, s: string, svc: string) {
     const same = project === p && server === s && service === svc;
@@ -225,7 +227,7 @@
     loading = true; error = '';
     filtered = !!(service || project || server || problemStatus || category || incidentLevel || seenMinutes);
     const scope = {status: problemStatus, category, level: incidentLevel, minutes: seenMinutes || '0'};
-    try { [incidents, incidentTree] = await Promise.all([api('/incidents?' + new URLSearchParams({...scope, service, project_id: project, server_id: server, offset: String(problemOffset)})), api('/incidents/tree?' + new URLSearchParams(scope))]); }
+    try { [incidents, incidentTree, agentActivity] = await Promise.all([api('/incidents?' + new URLSearchParams({...scope, service, project_id: project, server_id: server, offset: String(problemOffset)})), api('/incidents/tree?' + new URLSearchParams(scope)), api('/activity')]); }
     catch (e) { error = (e as Error).message; }
     finally { loading = false; }
   }
@@ -1010,7 +1012,11 @@
       {/if}
     {:else}
       <div class="incident-toolbar"><p>Actionable incidents, from first evidence to verified resolution.</p><button onclick={loadIncidents} disabled={loading}>Refresh incidents</button></div>
-      <div class="workflow" aria-label="Incident workflow">{#each ['ready','proposed','verifying','resolved'] as stage}<button class:chosen={problemStatus===stage} onclick={() => {problemStatus=problemStatus===stage?'':stage;problemOffset=0;loadIncidents();}}><span>{stage==='ready'?'Ready for agent':stage==='proposed'?'Fix proposed':stage==='verifying'?'Verifying':'Resolved'}</span><strong>{stageCount(stage)}</strong></button>{/each}</div>
+      <div class="workflow" aria-label="Incident workflow">{#each ['ready','proposed','approved','verifying','resolved'] as stage}<button class:chosen={problemStatus===stage} onclick={() => {problemStatus=problemStatus===stage?'':stage;problemOffset=0;loadIncidents();}}><span>{stage==='ready'?'Ready for agent':stage==='proposed'?'Fix proposed':stage==='approved'?'Approved':stage==='verifying'?'Verifying':'Resolved'}</span><strong>{stageCount(stage)}</strong></button>{/each}</div>
+      {#if agentActivity.length}{@const day = agentActivity.filter(a => Date.now() - Date.parse(a.at) < 864e5)}<details class="log-panel admin-panel agent-activity"><summary class="panel-heading"><h2>Agent activity</h2><span>{day.length} in the last 24 h{day.some(a => a.action === 'note') ? ` · ${day.filter(a => a.action === 'note').length} notes` : ''} · latest {new Date(agentActivity[0].at).toLocaleString()}</span></summary>
+        <div class="table-scroll"><table class="sources"><thead><tr><th>When</th><th>Incident</th><th>Agent</th><th>Details</th></tr></thead>
+          <tbody>{#each agentActivity as a}<tr><td>{new Date(a.at).toLocaleString()}</td><td><button class="chip" onclick={() => openIncident(a.incident_id)}>{a.labels.service} · {a.labels.server_id}</button><br><span class="muted">now {a.status} · {a.title}</span></td><td>{a.action}</td><td>{a.text}</td></tr>{/each}</tbody>
+        </table></div></details>{/if}
       {#if status && !status.jev_configured}<p class="notice">Jev is not connected. Incidents and evidence are being collected; configure the server-side TypeSafe API key to enable triage.</p>{/if}
       <form class="problem-filters" onsubmit={(e)=>{e.preventDefault();problemOffset=0;loadIncidents();}}><label>Service<input type="search" bind:value={service} oninput={() => { if (!service) { problemOffset=0; loadIncidents(); } }} list="service-values" placeholder="All services"><datalist id="service-values">{#each labelValues.service ?? [] as v}<option value={v}></option>{/each}</datalist></label><label>Stage<select bind:value={problemStatus}><option value="">All stages</option>{#each stages as stage}<option value={stage}>{stage}</option>{/each}</select></label><label>Category<select bind:value={category}><option value="">All categories</option>{#each categoryNames as c}<option value={c}>{c}</option>{/each}</select></label><label>Severity<select bind:value={incidentLevel}><option value="">All severities</option><option>warn</option><option>error</option><option>fatal</option></select></label><label>Last seen<select bind:value={seenMinutes}><option value="">Any time</option><option value="60">Last hour</option><option value="1440">Last 24 hours</option><option value="10080">Last 7 days</option><option value="43200">Last 30 days</option></select></label><button type="submit">Filter incidents</button><button type="button" class="icon-button" onclick={clearIncidentFilters} aria-label="Clear filters" title="Clear filters"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h14l-5.5 7v6l-3 2v-8z"/><path d="M16 14l5 5M21 14l-5 5"/></svg></button><span class="filter-count">{(incidents[0]?.total ?? 0).toLocaleString()} found</span></form>
       <div class="search-results">
@@ -1055,7 +1061,7 @@
               {#if selected.verification}<h3>Verification results</h3>{#each selected.verification.checks as check}<details class="check-result"><summary>{check.passed?'Passed':'Failed'}: {check.check}</summary><pre>{check.evidence}</pre></details>{/each}{#if selected.status==='verifying'}<p class="notice">Checks passed. Watching for recurrence for 15 minutes before resolving.</p>{/if}{/if}
               <h3>Retained evidence</h3>
               {#each selected.evidence as sample}<a class="evidence" href={evidenceUrl(sample)}><time>{time(sample.ts_ns)}</time><code>{sample.message.slice(0, 500)}</code><span>View surrounding logs</span></a>{/each}
-              <h3>Activity</h3>{#each selected.audit as event}<p class="job">{event.action.replaceAll('_',' ')} · {event.actor}<time>{new Date(event.at).toLocaleString()}</time>{#if event.data?.reason}<span>{event.data.reason}</span>{/if}</p>{/each}
+              <h3>Activity</h3>{#each selected.audit as event}<p class="job">{event.action.replaceAll('_',' ')} · {event.actor}<time>{new Date(event.at).toLocaleString()}</time>{#if event.data?.reason || event.data?.text}<span>{event.data.reason ?? event.data.text}</span>{/if}</p>{/each}
               <h3>Analysis history</h3>
               {#each selected.analyses as job}<p class="job">{job.status} · {job.attempts} attempts <time>{new Date(job.created_at).toLocaleString()}</time>{#if job.error}<span>{job.error}</span>{/if}</p>{/each}
             </div>

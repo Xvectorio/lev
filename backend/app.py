@@ -799,6 +799,37 @@ def agent_dismiss(incident_id: str, body: Dismissal):
     return dismiss(incident_id, body, 'agent', ('ready',))
 
 
+class Note(BaseModel):
+    generation: int = Field(ge=1)
+    request_id: str = Field(min_length=8, max_length=100)
+    text: str = Field(min_length=10, max_length=10000)
+
+
+@app.post('/api/agent/tasks/{incident_id}/note')
+def agent_note(incident_id: str, body: Note):
+    # Findings or a hand-off without a stage change, e.g. an approved fix the agent may not apply itself.
+    with db() as conn:
+        item = get_problem(conn, incident_id, True)
+        if item['generation'] != body.generation:
+            raise HTTPException(409, 'Stale incident generation; fetch the task again')
+        if not conn.execute("""SELECT 1 FROM audit WHERE incident_id=%s AND action='note'
+                AND data->>'request_id'=%s""", (incident_id, body.request_id)).fetchone():
+            conn.execute("INSERT INTO audit(incident_id,actor,action,data) VALUES (%s,'agent','note',%s)",
+                         (incident_id, Jsonb(body.model_dump())))
+    return {'status': item['status']}
+
+
+@app.get('/api/activity')
+def agent_activity(samples: bool = False):
+    """The latest agent writes across incidents: proposals, dismissals, verifications and notes."""
+    with db() as conn:
+        return conn.execute(f"""SELECT a.id,a.incident_id,a.at,a.action,i.status,i.labels,
+                left(coalesce(i.summary,i.pattern),200) AS title,
+                left(coalesce(a.data->>'text',a.data->>'reason',a.data->>'diagnosis',a.data->>'changes_applied'),1000) AS text
+            FROM audit a JOIN incidents i ON i.id=a.incident_id
+            WHERE a.actor='agent' AND (%s OR NOT {SAMPLE_SQL}) ORDER BY a.id DESC LIMIT 50""", (samples,)).fetchall()
+
+
 @app.post('/api/incidents/{incident_id}/dismiss')
 def operator_dismiss(incident_id: str, body: OperatorDismissal, request: Request):
     body.reason = body.reason.strip() or 'Human operator decision'

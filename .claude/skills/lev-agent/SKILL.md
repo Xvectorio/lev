@@ -11,6 +11,15 @@ Lev groups warn/error logs into incidents, Jev triages them, and `ready` ones wa
 
 You can never approve your own proposal. Stop and hand off at the approval gate.
 
+**Every incident you touch ends with a write to Lev**, never only a chat message. The operator tracks your work in Lev (**Agent activity** above the incident list, and each incident's Activity), not in your transcript:
+
+| Outcome | Write | Stage after |
+|---|---|---|
+| Fix found | `proposal` | `proposed` |
+| Harmless, or a duplicate of a tracked incident | `dismiss` | `observing` |
+| Approved fix applied and checked | `verify` | `verifying` (all passed) or `review` |
+| Anything else: blocked, needs a human, no access, cause unknown | `note` | unchanged |
+
 ## API
 
 Use only the helper script. It finds the agent token without printing it and allows only `/api/agent/*`:
@@ -22,9 +31,20 @@ $L GET  /api/agent/tasks/<id>             # full task: target, triage, evidence,
 $L POST /api/agent/tasks/<id>/proposal /path/body.json
 $L POST /api/agent/tasks/<id>/verify   /path/body.json
 $L POST /api/agent/tasks/<id>/dismiss  /path/body.json   # ready -> observing, with reason
+$L POST /api/agent/tasks/<id>/note     /path/body.json   # comment, stage unchanged
+$L url                                    # the Lev base URL, for approval links
 ```
 
-Env overrides: `LEV_URL` (default `http://localhost:8080`), `LEV_AGENT_TOKEN`, `LEV_ENV` (a `.env` holding `AGENT_TOKEN`). Without them it reads the token from the central host's `lev-api-1` container; elsewhere the user sets `LEV_AGENT_TOKEN` (Lev → Sources → **Copy agent token**). On a source server the task list is limited to that server's incidents automatically, using `VECTOR_SERVER_ID` from the Vector `.env` (`LEV_VECTOR_ENV`, default `/opt/lev-vector/.env`); `LEV_SERVER_ID` overrides it. The central host has no such file and sees all servers. Write request bodies to the scratchpad, not the repo.
+A write counts only when the helper prints the expected response: a proposal `id`, `{"status":"observing"}`, `{"status":"verifying"}`/`{"status":"review"}`, or `{"status":"<current stage>"}` for a note. Anything else (curl error, HTTP 4xx/5xx) means **nothing was recorded**: say so, never claim it happened. Quote the response in your report.
+
+Note body (any stage; reusing a `request_id` is a no-op):
+
+```json
+{"generation": 1, "request_id": "claude-<first 12 of id>-g<generation>-n<n>",
+ "text": "What you found or did, what blocked you, and exactly what the operator must do next."}
+```
+
+Env overrides: `LEV_URL` (default: `VECTOR_ENDPOINT` from the Vector config on a source server, else `http://localhost:8080`), `LEV_AGENT_TOKEN`, `LEV_ENV` (a `.env` holding `AGENT_TOKEN`). Without them it reads the token from the central host's `lev-api-1` container; elsewhere the user sets `LEV_AGENT_TOKEN` (Lev → Sources → **Copy agent token**). On a source server the task list is limited to that server's incidents automatically, using `VECTOR_SERVER_ID` from the Vector config (`LEV_VECTOR_ENV`, default `/opt/lev-vector/.env`, else the native `/etc/default/vector`); `LEV_SERVER_ID` overrides it. The central host has no such file and sees all servers. Write request bodies to the scratchpad, not the repo.
 
 **Never** read or print `.env` or the token, use the operator login, or call `/api/incidents/*` (approve, operator dismiss). Approval is the human's decision.
 
@@ -53,7 +73,8 @@ Then decide:
   ```
 
   This moves it to `observing` (not resolved) and records the reason in the incident's Activity. If it gets much worse, the incident goes back through triage and can come back as `ready`.
-- **Needs a human decision you can't frame as a change** (not your access, business call, or cause unknown) → neither propose nor dismiss. Report findings to the user with the incident id.
+- **Same cause as another incident** that already has a proposal or approval → dismiss it with a reason that starts `Duplicate of <12-char id> (<its stage>)`, plus the evidence that ties them (same request, timestamps, stack frame). Don't write a second proposal.
+- **Needs a human decision you can't frame as a change** (not your access, business call, or cause unknown) → neither propose nor dismiss. Post a **note** with your findings and the decision needed, then report to the user.
 
 ## 3. Propose
 
@@ -75,12 +96,14 @@ Then decide:
 - Reusing the same `request_id` + body is idempotent. Use a new `-p<n>` for a revised proposal.
 - `409 Stale incident generation` means it recurred and reopened, so fetch it again and re-assess.
 
-After POSTing, tell the user: incident id, one-line diagnosis, the changes, risk, and the approval link `${LEV_URL:-http://localhost:8080}/?incident=<id>` (expand `LEV_URL`; it opens the incident in the Lev UI, where the user approves). Then **stop work on that incident.**
+After POSTing, tell the user: incident id, one-line diagnosis, the changes, risk, and the approval link `<$L url>/?incident=<id>` (it opens the incident in the Lev UI, where the user approves). Then **stop work on that incident.**
 
 ## 4. Apply an `approved` task
 
 1. Fetch the task right before acting. Require `status == "approved"`, `permissions.approved_proposal` present, and its `id` and `generation` matching what you apply. Otherwise stop.
-2. Apply **only** the listed `changes`, in order, as written. If one can't be applied as written (file differs, command fails), stop. Don't improvise. Report the failure with a verify body where affected checks have `passed: false`, or tell the user.
+2. Apply **only** the listed `changes`, in order, as written. Don't improvise.
+   - **Blocked before changing anything** (your permissions refuse it, no access, file differs from the proposal, it needs a human's hands): do **not** send a verify. Post a **note**: what blocked you, the state you checked, and the exact steps for a human, ending with "then ask the agent to verify". The incident stays `approved`. When the user later says they applied it, run step 3 and verify, naming who applied it in `changes_applied`.
+   - **Failed part-way** (a change was made, the next one failed): verify with `passed: false` for the affected checks. That moves it to `review`. Offer the rollback.
 3. Run **every** check exactly as written and capture the real output (trimmed, secrets redacted).
 4. POST verify:
 
@@ -104,4 +127,4 @@ All passed → `verifying`. Lev resolves it if nothing recurs for 15 minutes and
 
 ## Report
 
-End with a short table: incident id (12 chars), service, action taken (proposed / applied+verified / dismissed + why / no action + why), and what the user must do next.
+End with a short table: incident id (12 chars), service, action taken (proposed / applied+verified / dismissed + why / noted + why), the Lev write and its response (e.g. `dismiss → observing`, `note → approved`, or `FAILED: 409 …`), and what the user must do next. An incident with no successful write is a failure to report, not "no action".

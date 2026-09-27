@@ -286,6 +286,14 @@ def run():
             assert client.post(route+'/dismiss', headers=agent, json={**dismissal,'request_id':'test-dismissal-2'}).status_code == 409
             assert client.post('/api/incidents/'+incident_id+'/dismiss', headers=agent, json=dismissal).status_code == 401
             assert client.get('/api/incidents/'+incident_id, headers=admin).json()['audit'][0]['data']['reason'] == dismissal['reason']
+            note = {'generation':1,'request_id':'test-note','text':'Blocked: the approved change needs a human.'}
+            assert client.post(route+'/note', headers=agent, json={**note,'generation':2}).status_code == 409
+            assert client.post(route+'/note', headers=agent, json=note).json() == {'status':'observing'}
+            assert client.post(route+'/note', headers=agent, json=note).json() == {'status':'observing'}
+            assert client.get('/api/activity', headers=agent).status_code == 401
+            feed = client.get('/api/activity', headers=admin, params={'samples': 'true'}).json()
+            assert [(a['action'], a['text']) for a in feed[:2]] == [('note', note['text']), ('dismissed', dismissal['reason'])], feed
+            assert client.get('/api/activity', headers=admin).json() == []
             with core.db() as conn:
                 conn.execute("UPDATE incidents SET status='ready'")
             proposal = {'generation':1,'request_id':'test-proposal','diagnosis':'Connection configuration is incorrect.',
