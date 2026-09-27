@@ -164,6 +164,17 @@ The differences from the container:
 - Docker container logs (`/host/docker/containers`) are not collected. If the server runs Docker, use the container install.
 - Apply `watch.d` changes with `systemctl restart vector`. Validate first with `sudo sh -c 'set -a; . /etc/default/vector; [ ! -f /etc/vector/watch.d/local.vrl ] || export LEV_LOCAL_VRL=/etc/vector/watch.d/local.vrl; vector validate --no-environment --config-dir /etc/vector/watch.d /etc/vector/vector.yaml'`.
 
+### Test a new source
+
+On the source server (Docker or native), write a test error and a warning to the journal. `-t` sets the service name Lev shows and `-p` the level:
+
+```sh
+logger -t lev-smoke -p user.err "lev smoke test: database connection refused"
+logger -t lev-smoke -p user.warning "lev smoke test: disk 91% full"
+```
+
+Both lines appear in the Log explorer within seconds and as two `lev-smoke` incidents within about a minute; repeating a line raises that incident's count. Info lines (`logger` without `-p`) are dropped on the server and never arrive. The journal must be persistent (`/var/log/journal` exists). Test incidents are triaged like real ones and spend Jev credits; pause Jev on the Jev triage page first if that matters. Nothing arriving? Check `docker compose logs vector` or `journalctl -u vector` for a 401 (wrong ingest password) or connection errors to `VECTOR_ENDPOINT`.
+
 ## Agent integration
 
 Claude Code can act as this agent with the project skill `.claude/skills/lev-agent` (`/lev-agent`, or `/loop 30m /lev-agent`). It investigates read-only, proposes, stops at operator approval, then applies and verifies only the approved proposal. Copy the folder to `~/.claude/skills/` and set `LEV_URL`/`LEV_AGENT_TOKEN` to use it on a source server. It then picks up only that server's incidents, using `VECTOR_SERVER_ID` from the Vector config (`LEV_VECTOR_ENV`, default `/opt/lev-vector/.env`, else the native `/etc/default/vector`; `LEV_SERVER_ID` overrides). `LEV_URL` defaults to that config's `VECTOR_ENDPOINT`.

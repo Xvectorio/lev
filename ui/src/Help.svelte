@@ -59,6 +59,10 @@
       'On a systemd server without Docker, download vector-install.sh from the same release and run it as root. It installs the matching Vector package with Lev\'s config in /etc/vector/. Set the same values (without JOURNAL_GID) in /etc/default/vector, then:',
       '$ systemctl enable --now vector',
       'Watch files go in /etc/vector/watch.d/ and need no mounts, but the vector user must be able to read the files they watch. Docker container logs are not collected. Rerun a newer vector-install.sh to upgrade.',
+      '# Test it',
+      'On the source server, write a test error and warning to the journal (-t is the service, -p the level). They show in the Log explorer within seconds and as incidents within about a minute; info lines never arrive. Test incidents spend Jev credits unless Jev is paused.',
+      '$ logger -t lev-smoke -p user.err "lev smoke test: database connection refused"',
+      '$ logger -t lev-smoke -p user.warning "lev smoke test: disk 91% full"',
     ]},
     connect: { title: 'Connecting agents', body: [
       'Lev does not fix things itself. An external agent (e.g. Claude Code with the lev-agent skill) fetches ready tasks, investigates read-only, submits a proposal, waits for your approval (it prints a link that opens the incident here), then applies it and reports every check.',
