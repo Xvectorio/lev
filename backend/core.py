@@ -92,20 +92,22 @@ def digest(value):
 
 
 def selector(labels=None, severity='', text=''):
-    parts = [f'{key}={json.dumps(value)}' for key, value in (labels or {}).items()
+    # LogQL strings are Go strings: json.dumps' \ud83d\ude00 surrogate pairs decode to U+FFFD, so emoji never matched.
+    quote = lambda value: json.dumps(value, ensure_ascii=False)
+    parts = [f'{key}={quote(value)}' for key, value in (labels or {}).items()
              if value and key in ('host', 'server_id', 'project_id', 'service', 'environment')]
     if not (labels or {}).get('service'):  # heartbeats only prove liveness; ask for service=lev-heartbeat to see them
         parts += ['service=~".+"', 'service!="lev-heartbeat"']
     query = '{' + ','.join(parts) + '}'
     if severity:
-        query += f' | json | level={json.dumps(severity)}'
+        query += f' | json | level={quote(severity)}'
     # Splunk-style terms: every word or "quoted phrase" must match; NOT excludes the next term.
     negate = False
     for phrase, word in re.findall(r'"([^"]*)"|(\S+)', text):
         if word == 'NOT':
             negate = True
         elif phrase or word:
-            query += (' != ' if negate else ' |= ') + json.dumps(phrase or word)
+            query += (' != ' if negate else ' |= ') + quote(phrase or word)
             negate = False
     return query
 

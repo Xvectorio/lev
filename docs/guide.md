@@ -40,7 +40,7 @@ The host needs Docker Engine with Compose v2.23 or newer; the [README quick star
 
 `compose.yaml` is self-contained: config files are baked into the `lev-api`, `lev-edge` and `lev-vector` images or inlined in the file, and a one-shot `init` service writes the generated secrets to the `secrets` volume without ever overwriting them. Each release attaches a `compose.yaml` pinned to its version (`LEV_VERSION` in `.env` overrides it). To upgrade, download the newer release's `compose.yaml` over the old one, then run `docker compose pull && docker compose up -d`; volumes and secrets are kept.
 
-The first visit shows **Create admin account**. It asks for a one-time setup code that only appears in `docker compose logs api`, so whoever reaches the page first cannot claim the instance. Passwords need at least 12 characters and are stored as scrypt hashes. Ten failed logins or setup codes from one address within 5 minutes block that address for the rest of the window (HTTP 429). Sessions last 7 days in an HttpOnly, SameSite=Strict cookie. To reset a password or add another admin:
+The first visit shows **Create admin account**. It asks for a one-time setup code that only appears in `docker compose logs api`, so whoever reaches the page first cannot claim the instance. Passwords need at least 12 characters and are stored as scrypt hashes (N=2^14, r=8, p=5, parameters kept in each hash; older hashes are upgraded at the next login). Ten failed logins or setup codes from one address within 5 minutes block that address for the rest of the window (HTTP 429). Sessions last 7 days in an HttpOnly, SameSite=Strict cookie. To reset a password or add another admin:
 
 ```sh
 docker compose exec -it api python reset_admin.py
@@ -155,7 +155,7 @@ Servers with systemd can run the same pipeline as a native service. Download `ve
 sudo sh vector-install.sh
 ```
 
-It installs the official Vector `.deb`/`.rpm` (the same version as the `lev-vector` image, amd64 or arm64), puts that release's `vector.yaml` and `local.vrl` in `/etc/vector/`, creates `/etc/vector/watch.d/`, and adds a systemd drop-in that starts Vector with the same config and `watch.d/local.vrl` handling as the container. Set the variables listed above (without `JOURNAL_GID`) in `/etc/default/vector`, which stays `chmod 600`, then start it with `systemctl enable --now vector`. `journalctl -u vector` shows its logs. To upgrade, run the new release's `vector-install.sh`: it keeps `/etc/default/vector` and `watch.d/` and restarts Vector.
+It installs the official Vector `.deb`/`.rpm` (the same version as the `lev-vector` image, amd64 or arm64; it refuses a package whose SHA256 differs from the one pinned in that release's `vector/packages.sha256`), puts that release's `vector.yaml` and `local.vrl` in `/etc/vector/`, creates `/etc/vector/watch.d/`, and adds a systemd drop-in that starts Vector with the same config and `watch.d/local.vrl` handling as the container. Set the variables listed above (without `JOURNAL_GID`) in `/etc/default/vector`, which stays `chmod 600`, then start it with `systemctl enable --now vector`. `journalctl -u vector` shows its logs. To upgrade, run the new release's `vector-install.sh`: it keeps `/etc/default/vector` and `watch.d/` and restarts Vector.
 
 The differences from the container:
 

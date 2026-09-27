@@ -27,13 +27,23 @@ SESSION_DAYS = 7
 setup_code = None  # One-time code, printed to the log while no admin account exists.
 
 
+# OWASP's scrypt option at 16 MiB per hash; N=2^17 needs 128 MiB, which parallel login attempts could exhaust.
+SCRYPT = (2**14, 8, 5)
+SCRYPT_PREFIX = 'scrypt$%d$%d$%d$' % SCRYPT
+
+
 def hash_password(password, salt=None):
     salt = salt or secrets.token_bytes(16)
-    return 'scrypt$' + salt.hex() + '$' + hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1).hex()
+    n, r, p = SCRYPT
+    return SCRYPT_PREFIX + salt.hex() + '$' + hashlib.scrypt(password.encode(), salt=salt, n=n, r=r, p=p).hex()
 
 
 def check_password(password, stored):
-    return hmac.compare_digest(hash_password(password, bytes.fromhex(stored.split('$')[1])), stored)
+    # scrypt$N$r$p$salt$hash; hashes from before parameters were stored are scrypt$salt$hash with N=2^14, r=8, p=1.
+    parts = stored.split('$')
+    n, r, p = (2**14, 8, 1) if len(parts) == 3 else map(int, parts[1:4])
+    hashed = hashlib.scrypt(password.encode(), salt=bytes.fromhex(parts[-2]), n=n, r=r, p=p).hex()
+    return hmac.compare_digest(hashed, parts[-1])
 
 
 UNKNOWN_USER_HASH = hash_password(secrets.token_hex())  # Same work for unknown names: no username probing by timing.
@@ -159,7 +169,11 @@ def too_many_failures(ip, record=False):
 def valid_login(username, password):
     with db() as conn:
         row = conn.execute('SELECT password_hash FROM users WHERE username=%s', (username,)).fetchone()
-    return check_password(password, row['password_hash'] if row else UNKNOWN_USER_HASH) and bool(row)
+        valid = check_password(password, row['password_hash'] if row else UNKNOWN_USER_HASH) and bool(row)
+        if valid and not row['password_hash'].startswith(SCRYPT_PREFIX):
+            # Upgrade hashes made with older parameters while the password is at hand.
+            conn.execute('UPDATE users SET password_hash=%s WHERE username=%s', (hash_password(password), username))
+    return valid
 
 
 @app.post('/api/auth/login')

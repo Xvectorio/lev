@@ -47,10 +47,9 @@ def ingest(conn, rows):
     # Capture context while it is available, independently of all AI providers.
     for job in conn.execute("SELECT * FROM jobs WHERE status IN ('pending','running') AND evidence IS NOT NULL AND NOT evidence ? 'context' LIMIT 20").fetchall():
         samples = job['evidence']['examples']
-        if not samples:
-            continue
-        ts = int(samples[0]['ts_ns'])
-        context = logs(selector(samples[0]['labels']), ts - 30 * NS, ts + 30 * NS, 30)
+        ts = int(samples[0]['ts_ns']) if samples else 0
+        # An empty context is stored too, so a job without examples isn't picked again on every pass.
+        context = logs(selector(samples[0]['labels']), ts - 30 * NS, ts + 30 * NS, 30) if samples else []
         job['evidence']['context'] = [{k: v for k, v in row.items() if k != 'raw'} | {'message': row['message'][:4000]} for row in context]
         conn.execute('UPDATE jobs SET evidence=%s WHERE id=%s', (Jsonb(job['evidence']), job['id']))
     return count
@@ -213,6 +212,10 @@ def over_daily_limit(conn):
     return False
 
 
+class NoEvidence(RuntimeError):
+    pass  # evidence expired before triage: retrying can't bring it back
+
+
 def analyze_one():
     # ponytail: one AI job at a time; use leased SKIP LOCKED jobs if queue throughput requires it.
     with db() as lock:
@@ -235,7 +238,7 @@ def analyze_one():
                 return True
             ev = job['evidence'] or {'examples': item['saved_evidence'], 'context': []}
             if not ev.get('examples'):
-                raise RuntimeError('No retained evidence available')
+                raise NoEvidence('No retained evidence available')
             retained = (job['result'] or {}).get('triage')
             with db() as conn:
                 # A retry routes with the policy its retained classification was made under.
@@ -265,7 +268,7 @@ def analyze_one():
                 state(conn, 'analyzer', note)
         except Exception as exc:
             error = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
-            terminal = isinstance(exc, (ValueError, KeyError)) or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (400,401,403,404,422))
+            terminal = isinstance(exc, (ValueError, KeyError, NoEvidence)) or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (400,401,403,404,422))
             delay = min(3600, 30 * 2 ** min(job['attempts'], 7))
             if isinstance(exc, httpx.HTTPStatusError):
                 error = 'Provider HTTP ' + str(exc.response.status_code)

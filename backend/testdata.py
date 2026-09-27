@@ -7,7 +7,7 @@ import uuid
 
 import httpx
 
-from core import LOKI, NS
+from core import LOKI, NS, RETENTION_H
 
 HOSTS = {'web-01': ('webshop', 'production'), 'app-01': ('webshop', 'production'), 'db-01': ('webshop', 'production'),
          'worker-01': ('billing', 'production'), 'edge-01': ('host-infrastructure', 'production'),
@@ -128,7 +128,7 @@ def wipe(conn):
     # Loki refuses an end in the future; anything newer than now arrives after the wipe anyway.
     now = int(time.time())
     response = httpx.post(LOKI + '/loki/api/v1/delete', params={
-        'query': '{service=~".+"}', 'start': str(now - 49 * 3600), 'end': str(now)}, timeout=30)
+        'query': '{service=~".+"}', 'start': str(now - (RETENTION_H + 1) * 3600), 'end': str(now)}, timeout=30)
     if not response.is_success:
         raise httpx.HTTPError(f'{response.status_code} {response.text.strip()[:200]}')
     conn.execute('SELECT pg_advisory_xact_lock(41001)')  # collector

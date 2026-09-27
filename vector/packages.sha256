@@ -1,0 +1,8 @@
+# From https://github.com/vectordotdev/vector/releases/download/v0.51.1/vector-0.51.1-SHA256SUMS; update with the Dockerfile's Vector version.
+e9b49d1efa5a0dfd844948ab23e4d569ca4083d0c202039ef9848069cbb28712  vector-0.51.1-1.aarch64.rpm
+6372028d404e1634189f3ee51c5706dcaf38f49f13a977903f2a90ccdc7dcb37  vector-0.51.1-1.armv7hl.rpm
+15521ac441087b3d740a43a121902d88b9904ea95a99cd62b3db61f57f84ac24  vector-0.51.1-1.x86_64.rpm
+fbd044f35c51fcf65b37199d0d2d7e698494e7777b10c03593123909d27b26f8  vector_0.51.1-1_amd64.deb
+4f33bc7c1216a28c90fb880501b5028f052cb718f6354a26612709b718a05f45  vector_0.51.1-1_arm64.deb
+c004ec3d7239539a9f673621d5aab920ba2f3001529445510bb4bc8a771e9abb  vector_0.51.1-1_armel.deb
+e1524f9eac9cd2a12c3716bd7b74d53af14909b1bb67c92abf9d27a2320518c1  vector_0.51.1-1_armhf.deb

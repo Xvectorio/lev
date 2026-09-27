@@ -1,3 +1,4 @@
+# Bumping the version? Update packages.sha256 too (install.sh verifies native packages against it).
 FROM timberio/vector:0.51.1-debian
 COPY vector.yaml local.vrl /etc/vector/
 COPY --chmod=755 entrypoint.sh /usr/local/bin/lev-vector

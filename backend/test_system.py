@@ -1,6 +1,7 @@
 """Runnable integration check. Uses a disposable PostgreSQL schema and real Loki.
 Provider calls are mocked; no AI credentials, charges, or remote actions are used.
 """
+import hashlib
 import json
 import os
 import time
@@ -78,6 +79,10 @@ def run():
         assert rows[0]['labels']['project_id'] == 'lev-test'
         assert rows[0]['labels']['server_id'] == schema
         assert 'project_id="lev-test"' in core.selector({'project_id': 'lev-test'})
+        # Emoji in a search reach Loki as UTF-8 (as \u surrogate escapes they matched nothing). Vector ships lines as UTF-8 too.
+        emoji = {**labels, 'server_id': schema + '-emoji'}
+        httpx.post(core.LOKI + '/loki/api/v1/push', json={'streams': [{'stream': emoji, 'values': [[str(ts), json.dumps({'message': 'disk \U0001F525 full', 'level': 'error'}, ensure_ascii=False)]]}]}).raise_for_status()
+        assert len(core.logs(core.selector(emoji, '', '\U0001F525'), ts, ts + 1)) == 1
         incident_id = core.fingerprint(rows[0])[0]
         with core.db() as conn:
             assert worker.ingest(conn, rows) == 1
@@ -154,7 +159,14 @@ def run():
             assert client.get('/api/status', headers={'Cookie': lev.COOKIE + '=' + created.cookies[lev.COOKIE]}).status_code == 401, 'Logged-out session still valid'
             assert client.post('/api/auth/login', headers=csrf, json={'username': 'test-operator', 'password': 'wrong password'}).status_code == 401
             assert client.post('/api/auth/login', headers=csrf, json={'username': 'nobody', 'password': 'correct horse battery'}).status_code == 401
+            # A hash from before parameters were stored still logs in and is upgraded to the current parameters.
+            salt = os.urandom(16)
+            with core.db() as conn:
+                conn.execute("UPDATE users SET password_hash=%s WHERE username='test-operator'",
+                             ('scrypt$' + salt.hex() + '$' + hashlib.scrypt(b'correct horse battery', salt=salt, n=2**14, r=8, p=1).hex(),))
             token = client.post('/api/auth/login', headers=csrf, json={'username': 'test-operator', 'password': 'correct horse battery'}).cookies[lev.COOKIE]
+            with core.db() as conn:
+                assert conn.execute("SELECT password_hash FROM users WHERE username='test-operator'").fetchone()['password_hash'].startswith(lev.SCRYPT_PREFIX)
             # Ten failures from one address block it, even with the right password; other addresses still log in.
             lev.FAILURES['203.0.113.9'] = [time.monotonic()] * 9
             blocked = {**csrf, 'X-Forwarded-For': '203.0.113.9'}
@@ -403,6 +415,7 @@ def run():
                 assert client.post('/api/wipe', headers=admin, json=wipe).status_code == 200
             params = loki_delete.call_args.kwargs['params']
             assert params['query'] == '{service=~".+"}' and int(params['end']) <= time.time(), 'Loki rejects future deletes'
+            assert int(params['start']) <= time.time() - core.RETENTION_H * 3600, 'Wipe must cover the whole retention'
             with core.db() as conn:
                 assert conn.execute('SELECT (SELECT count(*) FROM incidents)+(SELECT count(*) FROM jobs)+(SELECT count(*) FROM audit) AS n').fetchone()['n'] == 0
                 assert conn.execute('SELECT count(*) AS n FROM users').fetchone()['n'] == 1, 'Users survive the wipe'
@@ -418,6 +431,16 @@ def run():
                     assert worker.over_daily_limit(conn)
                 with patch.dict(os.environ, {'JEV_DAILY_LIMIT': '0'}):
                     assert not worker.over_daily_limit(conn)
+            # A job whose evidence expired fails once instead of retrying forever.
+            with core.db() as conn:
+                incident = conn.execute('SELECT id,generation FROM incidents WHERE labels=%s LIMIT 1', (Jsonb(noisy),)).fetchone()
+                conn.execute("UPDATE incidents SET saved_evidence='[]' WHERE id=%s", (incident['id'],))
+                conn.execute("INSERT INTO jobs(id,incident_id,generation,evidence) VALUES ('no-evidence',%s,%s,%s)",
+                             (incident['id'], incident['generation'], Jsonb({'examples': [], 'context': []})))
+            with patch.dict(os.environ, {'JEV_DAILY_LIMIT': '0'}):
+                assert worker.analyze_one()
+            with core.db() as conn:
+                assert conn.execute("SELECT status FROM jobs WHERE id='no-evidence'").fetchone()['status'] == 'failed'
         print('PASS: first-run setup, sessions, Loki ingestion, deduplication, provider outage, checkpoints, Jev contract, crash recovery, auth, proposal approval, verification, recurrence, retained evidence, manual idempotency, test data and wipe.')
     finally:
         os.environ.pop('PGOPTIONS', None)
