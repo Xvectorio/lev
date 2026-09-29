@@ -121,6 +121,10 @@ def run():
             assert set(kwargs['json']) == {'model', 'state', 'questions'}
             answers = {}
             for key, question in kwargs['json']['questions'].items():
+                if question['type'] == 'score':
+                    answers[key] = {'type':'score', 'score':2.2, 'confidence':.8,
+                                    'probabilities': {str(i): [0, 0, .8, .2][i] for i in range(len(question['criteria']))}}
+                    continue
                 choice = 'database' if key == 'category' else 'investigate'
                 answers[key] = {'type':'choice', 'choice':choice, 'confidence':.95,
                                 'probabilities': {option: float(option==choice) for option in question['criteria']}}
@@ -297,6 +301,13 @@ def run():
             other = 'warn' if level != 'warn' else 'fatal'
             assert client.get('/api/incidents', headers=admin, params={'samples': 'true', 'level': other}).json() == []
             assert client.get('/api/incidents/tree', headers=admin, params={'samples': 'true', 'level': other}).json() == []
+            # Urgency 2.2 rounds to medium: kept at the medium floor, dropped at high; every sort order works.
+            assert len(client.get('/api/incidents', headers=admin, params={'samples': 'true', 'urgency': 2}).json()) == 1
+            assert client.get('/api/incidents', headers=admin, params={'samples': 'true', 'urgency': 3}).json() == []
+            assert client.get('/api/incidents/tree', headers=admin, params={'samples': 'true', 'urgency': 3}).json() == []
+            for order in ('urgency', 'stage', 'recent'):
+                assert len(client.get('/api/incidents', headers=admin, params={'samples': 'true', 'sort': order}).json()) == 1
+            assert client.get('/api/incidents', headers=admin, params={'sort': 'x'}).status_code == 422
             assert client.post('/api/analyze', headers={'Cookie': admin['Cookie']}).status_code == 403
             task = client.get('/api/agent/tasks/' + incident_id, headers=agent).json()
             assert task['permissions']['approved_proposal'] is None

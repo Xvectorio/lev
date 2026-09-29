@@ -15,6 +15,8 @@
       'If the problem comes back, the incident reopens as a new episode and earlier approvals are invalidated. Lev itself never runs commands.',
       '# Agent activity',
       'Above the list: the latest agent proposals, dismissals, verifications and notes across all incidents, with the incident\'s current stage. Click one to open its incident; its Activity lists the same entries.',
+      '# Urgency',
+      'Jev also scores how soon each incident needs attention, from 0 (none) to 3 (high: outage, data loss, exhausted resource). The list shows the rounded level and puts the most urgent first; untriaged incidents come last. Filter on a minimum urgency, or sort by workflow stage or last seen instead. Urgency never changes routing.',
       '# Your verdict',
       'In an incident you can record where Jev should have routed it. Verdicts feed the Jev tune wizard and never change the incident.',
       '# Fields',
