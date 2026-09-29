@@ -175,6 +175,7 @@ def fingerprint(row):
     pattern = re.sub(r'\?[^\s"\'=]*=[^\s"\']*', '?<query>', pattern)
     pattern = re.sub(r'/\d+(?=[/\s"\'?]|$)', '/<n>', pattern)
     pattern = re.sub(r'\b\d{6,}\b', '<n>', pattern)
+    pattern = re.sub(r'\bIRQ \d+\b', 'IRQ <n>', pattern)  # irqbalance logs one line per IRQ
     pattern = re.sub(r'^(?:time="[^"]*"|\d{4}-\d\d-\d\d[T ][\d:.+Z-]+)\s*', '', pattern)
     return digest([row['labels'], pattern]), pattern
 

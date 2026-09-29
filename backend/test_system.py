@@ -47,6 +47,7 @@ def run():
         assert key('time="2026-09-24T14:46:39.46+02:00" level=warning msg="healthcheck failed" actualDuration="866.1µs" container=8ae0fa149364c2f2') == \
             key('time="2026-09-24T14:49:44.09+02:00" level=warning msg="healthcheck failed" actualDuration="335.5µs" container=0123456789abcdef')
         assert key('lookup failed for DNS') != key('lookup failed for TCP')
+        assert key('Cannot change IRQ 83 affinity: Permission denied') == key('Cannot change IRQ 7 affinity: Permission denied')
         # Saturated ranges split on Loki's [start, end) boundaries without skipping the midpoint.
         stored = [5] * 4000 + [10] * 3000
         fake = lambda query, start, end, limit, direction: [{'ts_ns': t} for t in stored if start <= t < end][:limit]
